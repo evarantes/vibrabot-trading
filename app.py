@@ -108,9 +108,9 @@ menu = st.sidebar.radio(
     "Módulos",
     options=[
         "Cadastro de Itens (Central)",
+        "Estoque Central e de Uso",
         "Transferir Central -> Unidade",
         "Lançamentos Lavanderia",
-        "Estoque Central e de Uso",
         "Apuração Lavanderia (Planilha)",
         "Contagem Física",
         "Painel de Controle",
@@ -248,100 +248,6 @@ if menu == "Cadastro de Itens (Central)":
             hide_index=True,
         )
 
-        st.markdown("---")
-        st.subheader("Estoque Central (compras e movimentações)")
-
-        active_central_items = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=True))
-        if active_central_items.empty:
-            st.warning("Ative ao menos um item no cadastro central para lançar compras/movimentações.")
-        else:
-            central_item_map = {row["name"]: int(row["id"]) for _, row in active_central_items.iterrows()}
-            central_form_labels = list(CENTRAL_STOCK_LABELS.keys())
-
-            with st.form("form-central-stock", clear_on_submit=True):
-                f1, f2, f3 = st.columns(3)
-                movement_date = f1.date_input("Data da compra/movimento", value=date.today(), key="central_movement_date")
-                item_name = f2.selectbox("Selecionar item", options=sorted(central_item_map.keys()))
-                movement_label = f3.selectbox("Tipo de movimento", options=central_form_labels)
-
-                f4, f5, f6 = st.columns(3)
-                quantity = f4.number_input("Quantidade", min_value=1, step=1, value=1, key="central_qty")
-                invoice_number = f5.text_input("Número da NF", placeholder="Ex: 12345")
-                unit_purchase_value = f6.number_input(
-                    "Valor de compra unitário (R$)",
-                    min_value=0.0,
-                    step=0.01,
-                    value=0.0,
-                )
-
-                calc_total = float(quantity) * float(unit_purchase_value)
-                g1, g2 = st.columns(2)
-                total_purchase_value = g1.number_input(
-                    "Valor total (R$)",
-                    min_value=0.0,
-                    step=0.01,
-                    value=float(calc_total),
-                )
-                note = g2.text_input("Observação")
-
-                save_central_move = st.form_submit_button("Salvar movimentação de estoque central")
-                if save_central_move:
-                    try:
-                        movement_type = CENTRAL_STOCK_LABELS[movement_label]
-                        if movement_type == "PURCHASE" and not invoice_number.strip():
-                            st.error("Informe o número da NF para lançamento de compra.")
-                        else:
-                            add_movement(
-                                item_id=central_item_map[item_name],
-                                movement_type=movement_type,
-                                quantity=int(quantity),
-                                movement_date=movement_date,
-                                operation_unit="CENTRAL",
-                                source_ref=invoice_number,
-                                movement_unit_cost=float(unit_purchase_value),
-                                movement_total_value=float(total_purchase_value),
-                                note=note,
-                            )
-                            st.success("Movimentação central registrada.")
-                    except Exception as exc:  # noqa: BLE001
-                        st.error(f"Falha ao salvar movimentação: {exc}")
-
-        stock_report = pd.DataFrame(get_central_stock_report(as_of_date=as_of_date))
-        if stock_report.empty:
-            st.info("Sem dados no relatório de estoque central.")
-        else:
-            stock_report["tipo_movimentacao"] = stock_report["last_movement_type"].map(MOVEMENT_LABELS).fillna(
-                stock_report["last_movement_type"]
-            )
-            report_df = stock_report.rename(
-                columns={
-                    "last_purchase_date": "data_ultima_compra",
-                    "name": "item",
-                    "stock_qty": "quantidade_estoque",
-                    "last_invoice": "numero_nf_ultima_compra",
-                    "last_unit_cost": "valor_unitario_item",
-                    "last_total_value": "valor_total_item",
-                    "last_note": "observacao",
-                }
-            )
-            st.markdown("**Relatório do estoque central**")
-            st.dataframe(
-                report_df[
-                    [
-                        "data_ultima_compra",
-                        "item",
-                        "tipo_movimentacao",
-                        "quantidade_estoque",
-                        "numero_nf_ultima_compra",
-                        "valor_unitario_item",
-                        "valor_total_item",
-                        "observacao",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
-
 elif menu == "Transferir Central -> Unidade":
     st.subheader("Transferência do estoque CENTRAL para HOTEL/CLUB")
     central_items = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=True))
@@ -472,65 +378,154 @@ elif menu == "Estoque Central e de Uso":
     st.subheader(f"Estoque central e de uso - {UNIT_OPTIONS[selected_unit]}")
     if selected_unit == "CENTRAL":
         st.caption("Entrada de compras e ajustes do estoque central.")
-        operational_labels = CENTRAL_STOCK_LABELS
+        active_central_items = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=True))
+        if active_central_items.empty:
+            st.warning("Ative ao menos um item no cadastro central para lançar compras/movimentações.")
+        else:
+            central_item_map = {row["name"]: int(row["id"]) for _, row in active_central_items.iterrows()}
+            central_form_labels = list(CENTRAL_STOCK_LABELS.keys())
+
+            with st.form("form-central-stock", clear_on_submit=True):
+                f1, f2, f3 = st.columns(3)
+                movement_date = f1.date_input("Data da compra/movimento", value=date.today(), key="central_movement_date")
+                item_name = f2.selectbox("Selecionar item", options=sorted(central_item_map.keys()))
+                movement_label = f3.selectbox("Tipo de movimento", options=central_form_labels)
+
+                f4, f5, f6 = st.columns(3)
+                quantity = f4.number_input("Quantidade", min_value=1, step=1, value=1, key="central_qty")
+                invoice_number = f5.text_input("Número da NF", placeholder="Ex: 12345")
+                unit_purchase_value = f6.number_input(
+                    "Valor de compra unitário (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    value=0.0,
+                )
+
+                calc_total = float(quantity) * float(unit_purchase_value)
+                g1, g2 = st.columns(2)
+                total_purchase_value = g1.number_input(
+                    "Valor total (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    value=float(calc_total),
+                )
+                note = g2.text_input("Observação")
+
+                save_central_move = st.form_submit_button("Salvar movimentação de estoque central")
+                if save_central_move:
+                    try:
+                        movement_type = CENTRAL_STOCK_LABELS[movement_label]
+                        if movement_type == "PURCHASE" and not invoice_number.strip():
+                            st.error("Informe o número da NF para lançamento de compra.")
+                        else:
+                            add_movement(
+                                item_id=central_item_map[item_name],
+                                movement_type=movement_type,
+                                quantity=int(quantity),
+                                movement_date=movement_date,
+                                operation_unit="CENTRAL",
+                                source_ref=invoice_number,
+                                movement_unit_cost=float(unit_purchase_value),
+                                movement_total_value=float(total_purchase_value),
+                                note=note,
+                            )
+                            st.success("Movimentação central registrada.")
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Falha ao salvar movimentação: {exc}")
+
+        stock_report = pd.DataFrame(get_central_stock_report(as_of_date=as_of_date))
+        if stock_report.empty:
+            st.info("Sem dados no relatório de estoque central.")
+        else:
+            stock_report["tipo_movimentacao"] = stock_report["last_movement_type"].map(MOVEMENT_LABELS).fillna(
+                stock_report["last_movement_type"]
+            )
+            report_df = stock_report.rename(
+                columns={
+                    "last_purchase_date": "data_ultima_compra",
+                    "name": "item",
+                    "stock_qty": "quantidade_estoque",
+                    "last_invoice": "numero_nf_ultima_compra",
+                    "last_unit_cost": "valor_unitario_item",
+                    "last_total_value": "valor_total_item",
+                    "last_note": "observacao",
+                }
+            )
+            st.markdown("**Relatório do estoque central**")
+            st.dataframe(
+                report_df[
+                    [
+                        "data_ultima_compra",
+                        "item",
+                        "tipo_movimentacao",
+                        "quantidade_estoque",
+                        "numero_nf_ultima_compra",
+                        "valor_unitario_item",
+                        "valor_total_item",
+                        "observacao",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
     else:
         st.caption(
             "Controle de estoque da unidade, estoque de uso (alocação/retorno) e perdas."
         )
         operational_labels = UNIT_STOCK_LABELS
-    item_map = _items_map(selected_unit)
-    if not item_map:
-        st.warning("Cadastre pelo menos um item antes de registrar movimentos.")
-    else:
-        with st.form("form-operational", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            movement_date = c1.date_input("Data do movimento", value=date.today())
-            item_name = c2.selectbox("Item", options=sorted(item_map.keys()))
-            movement_label = c3.selectbox(
-                "Tipo de movimento",
-                options=list(operational_labels.keys()),
-                help="Use este módulo para ajustes de estoque e movimentação de uso diário.",
-            )
-            c4, c5, c6 = st.columns(3)
-            quantity = c4.number_input("Quantidade", min_value=1, step=1, value=1)
-            source_ref = c5.text_input("Referência", placeholder="NF, ordem interna")
-            note = c6.text_input("Observação")
-            move_submitted = st.form_submit_button("Salvar movimento")
-            if move_submitted:
-                try:
-                    add_movement(
-                        item_id=item_map[item_name],
-                        movement_type=operational_labels[movement_label],
-                        quantity=int(quantity),
-                        movement_date=movement_date,
-                        operation_unit=selected_unit,
-                        source_ref=source_ref,
-                        note=note,
-                    )
-                    st.success("Movimento registrado.")
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Falha ao salvar movimento: {exc}")
+        item_map = _items_map(selected_unit)
+        if not item_map:
+            st.warning("Cadastre pelo menos um item antes de registrar movimentos.")
+        else:
+            with st.form("form-operational", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                movement_date = c1.date_input("Data do movimento", value=date.today())
+                item_name = c2.selectbox("Item", options=sorted(item_map.keys()))
+                movement_label = c3.selectbox(
+                    "Tipo de movimento",
+                    options=list(operational_labels.keys()),
+                    help="Use este módulo para ajustes de estoque e movimentação de uso diário.",
+                )
+                c4, c5, c6 = st.columns(3)
+                quantity = c4.number_input("Quantidade", min_value=1, step=1, value=1)
+                source_ref = c5.text_input("Referência", placeholder="NF, ordem interna")
+                note = c6.text_input("Observação")
+                move_submitted = st.form_submit_button("Salvar movimento")
+                if move_submitted:
+                    try:
+                        add_movement(
+                            item_id=item_map[item_name],
+                            movement_type=operational_labels[movement_label],
+                            quantity=int(quantity),
+                            movement_date=movement_date,
+                            operation_unit=selected_unit,
+                            source_ref=source_ref,
+                            note=note,
+                        )
+                        st.success("Movimento registrado.")
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Falha ao salvar movimento: {exc}")
 
-    recent_df = pd.DataFrame(list_recent_movements(limit=150, operation_unit=selected_unit))
-    if not recent_df.empty:
-        recent_df = recent_df[recent_df["movement_type"].isin(set(operational_labels.values()))]
-    if not recent_df.empty:
-        recent_df["tipo"] = recent_df["movement_type"].map(MOVEMENT_LABELS)
-        st.dataframe(
-            recent_df[
-                ["movement_date", "item_name", "tipo", "quantity", "source_ref", "note"]
-            ].rename(
-                columns={
-                    "movement_date": "data",
-                    "item_name": "item",
-                    "quantity": "quantidade",
-                    "source_ref": "referencia",
-                    "note": "observacao",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
+        recent_df = pd.DataFrame(list_recent_movements(limit=150, operation_unit=selected_unit))
+        if not recent_df.empty:
+            recent_df = recent_df[recent_df["movement_type"].isin(set(operational_labels.values()))]
+        if not recent_df.empty:
+            recent_df["tipo"] = recent_df["movement_type"].map(MOVEMENT_LABELS)
+            st.dataframe(
+                recent_df[
+                    ["movement_date", "item_name", "tipo", "quantity", "source_ref", "note"]
+                ].rename(
+                    columns={
+                        "movement_date": "data",
+                        "item_name": "item",
+                        "quantity": "quantidade",
+                        "source_ref": "referencia",
+                        "note": "observacao",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 elif menu == "Apuração Lavanderia (Planilha)":
     st.subheader(f"Apuração de cobrança da lavanderia - {UNIT_OPTIONS[selected_unit]}")
