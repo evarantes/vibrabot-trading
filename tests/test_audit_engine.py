@@ -9,7 +9,9 @@ from codexiaauditor.repository import (
     get_balances,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
+    get_item_theoretical_stock,
     list_items,
+    transfer_central_to_unit,
     upsert_inventory_count,
 )
 
@@ -143,3 +145,37 @@ def test_apuracao_planilha_por_periodo(tmp_path):
     assert row["rewash_sent_qty"] == 3
     assert row["rewash_returned_qty"] == 2
     assert row["loss_qty"] == 1
+
+
+def test_fluxo_estoque_central_para_unidades(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    today = date.today()
+
+    add_item("Toalha de mesa", "Mesa", par_level=0, operation_unit="CENTRAL")
+    central_item_id = list_items(operation_unit="CENTRAL")[0]["id"]
+    add_movement(central_item_id, "PURCHASE", 200, today, operation_unit="CENTRAL")
+
+    transfer_central_to_unit(
+        central_item_id=central_item_id,
+        target_unit="CLUB",
+        quantity=100,
+        movement_date=today,
+        laundry_unit_cost=2.5,
+    )
+    transfer_central_to_unit(
+        central_item_id=central_item_id,
+        target_unit="HOTEL",
+        quantity=50,
+        movement_date=today,
+        laundry_unit_cost=2.2,
+    )
+
+    central_stock = get_item_theoretical_stock(central_item_id, today)
+    club_item = list_items(operation_unit="CLUB")[0]
+    hotel_item = list_items(operation_unit="HOTEL")[0]
+
+    assert central_stock == 50
+    assert int(get_item_theoretical_stock(int(club_item["id"]), today)) == 100
+    assert int(get_item_theoretical_stock(int(hotel_item["id"]), today)) == 50
+    assert float(club_item["laundry_unit_cost"]) == 2.5
+    assert float(hotel_item["laundry_unit_cost"]) == 2.2

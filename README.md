@@ -38,10 +38,11 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - valor total por item (valor unitário x total),
    - relave enviado/retornado (sem cobrança),
    - perdas no período.
-7. **Operação por unidade independente**:
-   - **La Plage** e **Club** com catálogos próprios de itens,
-   - preços de lavagem independentes,
-   - idas/voltas da lavanderia, relave e perdas independentes.
+7. **Fluxo com estoque central + unidades independentes**:
+   - cadastro mestre de itens no **CENTRAL**,
+   - transferência do CENTRAL para **HOTEL** e **CLUB**,
+   - preços de lavagem independentes por unidade,
+   - idas/voltas da lavanderia, relave e perdas independentes por unidade.
 
 ---
 
@@ -51,7 +52,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 - **Persistência principal:** PostgreSQL
 - **Núcleo de auditoria:** `src/codexiaauditor/audit_engine.py`
 - **Camada de dados:** `src/codexiaauditor/repository.py`
-- **Separação operacional:** unidade `HOTEL` e `CLUB`
+- **Separação operacional:** `CENTRAL`, `HOTEL` e `CLUB`
 
 ---
 
@@ -105,14 +106,13 @@ pytest
 
 ## Fluxo sugerido de operação diária
 
-1. Escolher unidade no menu lateral (`LA_PLAGE` ou `CLUB`).
-2. Cadastrar/editar itens na tela **Cadastro de Itens** (catálogo por unidade).
-3. Registrar envios/retornos da lavanderia na tela **Lançamentos Lavanderia**.
-4. Usar **Relavagem** quando lote retorna mal lavado (sem cobrança extra).
-5. Registrar compras, transferências central/uso e perdas em **Estoque Central e de Uso**.
-6. Fazer contagem física diária em **Contagem Física**.
-7. Acompanhar posições em **Painel de Controle** e investigar alertas em **Auditoria IA**.
-8. Validar cobrança na tela **Apuração Lavanderia (Planilha)** para quinzena/mensalidade.
+1. Cadastrar/editar itens no módulo **Cadastro de Itens (Central)**.
+2. Lançar compras e saldo no **CENTRAL** em **Estoque Central e de Uso**.
+3. Transferir itens em **Transferir Central -> Unidade** para HOTEL/CLUB.
+4. Lançar lavanderia e relave separadamente em HOTEL e CLUB.
+5. Fazer contagem física diária em cada unidade.
+6. Acompanhar painéis e auditoria IA por unidade.
+7. Validar cobrança quinzenal/mensal na **Apuração Lavanderia (Planilha)**.
 
 ---
 

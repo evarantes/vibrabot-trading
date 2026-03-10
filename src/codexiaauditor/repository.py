@@ -17,20 +17,20 @@ MOVEMENT_TYPES = {
     "IN_USE_RETURNED",
     "LOSS",
 }
-OPERATION_UNITS = {"LA_PLAGE", "CLUB"}
+OPERATION_UNITS = {"CENTRAL", "HOTEL", "CLUB"}
 
 
 def _normalize_unit(operation_unit: str) -> str:
     raw = operation_unit.strip().upper()
     aliases = {
-        "HOTEL": "LA_PLAGE",
-        "LA PLAGE": "LA_PLAGE",
-        "LAPLAGE": "LA_PLAGE",
+        "LA_PLAGE": "HOTEL",
+        "LA PLAGE": "HOTEL",
+        "LAPLAGE": "HOTEL",
         "CLUBE": "CLUB",
     }
     unit = aliases.get(raw, raw)
     if unit not in OPERATION_UNITS:
-        raise ValueError(f"Unidade inválida: {operation_unit}. Use LA_PLAGE ou CLUB.")
+        raise ValueError(f"Unidade inválida: {operation_unit}. Use CENTRAL, HOTEL ou CLUB.")
     return unit
 
 
@@ -45,7 +45,7 @@ def add_item(
     category: str,
     par_level: int = 0,
     laundry_unit_cost: float = 0.0,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
 ) -> None:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
@@ -97,7 +97,21 @@ def update_item(
         )
 
 
-def list_items(operation_unit: str = "LA_PLAGE", active_only: bool = True) -> list[dict[str, Any]]:
+def get_item_by_id(item_id: int) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = execute(
+            conn,
+            """
+            SELECT id, name, operation_unit, category, par_level, laundry_unit_cost, active
+            FROM items
+            WHERE id = ?
+            """,
+            (item_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_items(operation_unit: str = "HOTEL", active_only: bool = True) -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     query = (
         "SELECT id, name, operation_unit, category, par_level, laundry_unit_cost, active "
@@ -113,12 +127,176 @@ def list_items(operation_unit: str = "LA_PLAGE", active_only: bool = True) -> li
     return [dict(row) for row in rows]
 
 
+def get_item_theoretical_stock(item_id: int, as_of_date: date) -> int:
+    with get_connection() as conn:
+        row = execute(
+            conn,
+            """
+            SELECT
+                COALESCE(
+                    SUM(
+                        CASE movement_type
+                            WHEN 'PURCHASE' THEN quantity
+                            WHEN 'STOCK_IN' THEN quantity
+                            WHEN 'STOCK_OUT' THEN -quantity
+                            WHEN 'LAUNDRY_SENT' THEN -quantity
+                            WHEN 'LAUNDRY_REWASH_SENT' THEN -quantity
+                            WHEN 'LAUNDRY_RETURNED' THEN quantity
+                            WHEN 'LAUNDRY_REWASH_RETURNED' THEN quantity
+                            WHEN 'IN_USE_ALLOCATED' THEN -quantity
+                            WHEN 'IN_USE_RETURNED' THEN quantity
+                            WHEN 'LOSS' THEN -quantity
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS stock_theoretical
+            FROM movements
+            WHERE item_id = ?
+              AND movement_date <= ?
+            """,
+            (item_id, as_of_date.isoformat()),
+        ).fetchone()
+    if row is None:
+        return 0
+    return int(row["stock_theoretical"] or 0)
+
+
+def transfer_central_to_unit(
+    central_item_id: int,
+    target_unit: str,
+    quantity: int,
+    movement_date: date,
+    laundry_unit_cost: float = 0.0,
+    source_ref: str = "",
+    note: str = "",
+) -> dict[str, int]:
+    target = _normalize_unit(target_unit)
+    if target == "CENTRAL":
+        raise ValueError("A unidade de destino deve ser HOTEL ou CLUB.")
+    if quantity <= 0:
+        raise ValueError("Quantidade deve ser maior que zero.")
+
+    central_item = get_item_by_id(central_item_id)
+    if not central_item:
+        raise ValueError("Item central não encontrado.")
+    if _normalize_unit(central_item["operation_unit"]) != "CENTRAL":
+        raise ValueError("Selecione um item do estoque CENTRAL.")
+
+    stock_available = get_item_theoretical_stock(central_item_id, movement_date)
+    if stock_available < quantity:
+        raise ValueError(
+            f"Estoque central insuficiente. Disponível={stock_available}, solicitado={quantity}."
+        )
+
+    with get_connection() as conn:
+        target_item = execute(
+            conn,
+            """
+            SELECT id, laundry_unit_cost
+            FROM items
+            WHERE name = ?
+              AND operation_unit = ?
+            """,
+            (central_item["name"], target),
+        ).fetchone()
+
+        if target_item is None:
+            execute(
+                conn,
+                """
+                INSERT INTO items (name, operation_unit, category, par_level, laundry_unit_cost, active)
+                VALUES (?, ?, ?, ?, ?, TRUE)
+                """,
+                (
+                    central_item["name"],
+                    target,
+                    central_item["category"],
+                    int(central_item["par_level"] or 0),
+                    max(float(laundry_unit_cost), 0.0),
+                ),
+            )
+            target_item = execute(
+                conn,
+                """
+                SELECT id, laundry_unit_cost
+                FROM items
+                WHERE name = ?
+                  AND operation_unit = ?
+                """,
+                (central_item["name"], target),
+            ).fetchone()
+        elif laundry_unit_cost > 0:
+            execute(
+                conn,
+                """
+                UPDATE items
+                SET laundry_unit_cost = ?
+                WHERE id = ?
+                """,
+                (max(float(laundry_unit_cost), 0.0), int(target_item["id"])),
+            )
+
+        transfer_note = note.strip() or "Transferência do estoque CENTRAL para unidade."
+        execute(
+            conn,
+            """
+            INSERT INTO movements (
+                item_id,
+                operation_unit,
+                movement_type,
+                quantity,
+                movement_date,
+                source_ref,
+                note
+            )
+            VALUES (?, 'CENTRAL', 'STOCK_OUT', ?, ?, ?, ?)
+            """,
+            (
+                central_item_id,
+                quantity,
+                movement_date.isoformat(),
+                source_ref.strip(),
+                f"{transfer_note} Destino: {target}.",
+            ),
+        )
+        execute(
+            conn,
+            """
+            INSERT INTO movements (
+                item_id,
+                operation_unit,
+                movement_type,
+                quantity,
+                movement_date,
+                source_ref,
+                note
+            )
+            VALUES (?, ?, 'STOCK_IN', ?, ?, ?, ?)
+            """,
+            (
+                int(target_item["id"]),
+                target,
+                quantity,
+                movement_date.isoformat(),
+                source_ref.strip(),
+                "Transferência recebida do estoque CENTRAL.",
+            ),
+        )
+
+    return {
+        "central_item_id": int(central_item_id),
+        "target_item_id": int(target_item["id"]),
+        "quantity": int(quantity),
+    }
+
+
 def add_movement(
     item_id: int,
     movement_type: str,
     quantity: int,
     movement_date: date,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
     source_ref: str = "",
     note: str = "",
 ) -> None:
@@ -169,7 +347,7 @@ def upsert_inventory_count(
     counted_stock: int,
     counted_laundry: int = 0,
     counted_in_use: int = 0,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
     note: str = "",
 ) -> None:
     unit = _normalize_unit(operation_unit)
@@ -226,7 +404,7 @@ def upsert_inventory_count(
         )
 
 
-def get_balances(as_of_date: date, operation_unit: str = "LA_PLAGE") -> list[dict[str, Any]]:
+def get_balances(as_of_date: date, operation_unit: str = "HOTEL") -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         rows = execute(
@@ -325,7 +503,7 @@ def get_balances(as_of_date: date, operation_unit: str = "LA_PLAGE") -> list[dic
     return [dict(row) for row in rows]
 
 
-def list_recent_movements(limit: int = 200, operation_unit: str = "LA_PLAGE") -> list[dict[str, Any]]:
+def list_recent_movements(limit: int = 200, operation_unit: str = "HOTEL") -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         rows = execute(
@@ -355,7 +533,7 @@ def get_daily_allocated_usage(
     item_id: int,
     days: int = 30,
     ref_date: date | None = None,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
 ) -> list[dict[str, Any]]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -386,7 +564,7 @@ def get_daily_allocated_usage(
     return [dict(row) for row in rows]
 
 
-def get_laundry_movements(item_id: int, as_of_date: date, operation_unit: str = "LA_PLAGE") -> list[dict[str, Any]]:
+def get_laundry_movements(item_id: int, as_of_date: date, operation_unit: str = "HOTEL") -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         rows = execute(
@@ -410,7 +588,7 @@ def get_laundry_movements(item_id: int, as_of_date: date, operation_unit: str = 
     return [dict(row) for row in rows]
 
 
-def get_loss_totals(days: int, ref_date: date | None = None, operation_unit: str = "LA_PLAGE") -> dict[int, int]:
+def get_loss_totals(days: int, ref_date: date | None = None, operation_unit: str = "HOTEL") -> dict[int, int]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
     unit = _normalize_unit(operation_unit)
@@ -433,7 +611,7 @@ def get_loss_totals(days: int, ref_date: date | None = None, operation_unit: str
 def get_daily_movement_totals(
     days: int = 30,
     ref_date: date | None = None,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
 ) -> list[dict[str, Any]]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -466,7 +644,7 @@ def get_daily_movement_totals(
 def get_laundry_billing_summary(
     days: int = 30,
     ref_date: date | None = None,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
 ) -> dict[str, int]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -501,7 +679,7 @@ def get_laundry_billing_summary(
 def get_laundry_period_item_report(
     start_date: date,
     end_date: date,
-    operation_unit: str = "LA_PLAGE",
+    operation_unit: str = "HOTEL",
 ) -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:

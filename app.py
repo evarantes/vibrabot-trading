@@ -18,10 +18,12 @@ from codexiaauditor.repository import (
     add_movement,
     get_balances,
     get_daily_movement_totals,
+    get_item_theoretical_stock,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
     list_items,
     list_recent_movements,
+    transfer_central_to_unit,
     update_item,
     upsert_inventory_count,
 )
@@ -49,17 +51,22 @@ LAUNDRY_LABELS = {
     "Relavagem: reenviado sem cobrança": "LAUNDRY_REWASH_SENT",
     "Relavagem: retorno sem cobrança": "LAUNDRY_REWASH_RETURNED",
 }
-OPERATIONAL_LABELS = {
+CENTRAL_STOCK_LABELS = {
     "Compra de enxoval": "PURCHASE",
     "Ajuste de entrada no estoque central": "STOCK_IN",
     "Ajuste de saída no estoque central": "STOCK_OUT",
+    "Perda / baixa por avaria ou extravio": "LOSS",
+}
+UNIT_STOCK_LABELS = {
+    "Ajuste de entrada no estoque da unidade": "STOCK_IN",
+    "Ajuste de saída no estoque da unidade": "STOCK_OUT",
     "Transferir do estoque central para estoque de uso": "IN_USE_ALLOCATED",
     "Retornar do estoque de uso para estoque central": "IN_USE_RETURNED",
     "Perda / baixa por avaria ou extravio": "LOSS",
 }
 
 
-UNIT_OPTIONS = {"LA_PLAGE": "La Plage", "CLUB": "Club"}
+UNIT_OPTIONS = {"CENTRAL": "Estoque Central", "HOTEL": "Hotel", "CLUB": "Club"}
 
 
 def _items_map(operation_unit: str) -> dict[str, int]:
@@ -96,7 +103,8 @@ as_of_date = st.sidebar.date_input("Dados de referência de auditoria", value=da
 menu = st.sidebar.radio(
     "Módulos",
     options=[
-        "Cadastro de Itens",
+        "Cadastro de Itens (Central)",
+        "Transferir Central -> Unidade",
         "Lançamentos Lavanderia",
         "Estoque Central e de Uso",
         "Apuração Lavanderia (Planilha)",
@@ -113,14 +121,17 @@ st.caption(
     "Auditoria inteligente de enxoval (compras, estoque, lavanderia e uso diário)"
 )
 
-if menu == "Cadastro de Itens":
-    st.subheader("Cadastrar item de enxoval")
+if menu == "Cadastro de Itens (Central)":
+    st.subheader("Cadastro mestre de itens (Estoque Central)")
+    if selected_unit != "CENTRAL":
+        st.info("O cadastro mestre é no estoque CENTRAL. A unidade selecionada no menu lateral não altera este módulo.")
+
     with st.form("form-item", clear_on_submit=True):
         col1, col2, col3, col4 = st.columns(4)
         name = col1.text_input("Nome do item", placeholder="Ex: Lençol solteiro 180 fios")
         category = col2.text_input("Categoria", value="Roupa de cama")
         par_level = col3.number_input("Nível mínimo (par level)", min_value=0, step=1, value=0)
-        laundry_cost = col4.number_input("Valor unit. lavagem (R$)", min_value=0.0, step=0.1, value=0.0)
+        laundry_cost = col4.number_input("Valor unit. base (R$)", min_value=0.0, step=0.1, value=0.0)
         submitted = st.form_submit_button("Salvar item")
         if submitted:
             if not name.strip():
@@ -132,13 +143,13 @@ if menu == "Cadastro de Itens":
                         category=category,
                         par_level=int(par_level),
                         laundry_unit_cost=float(laundry_cost),
-                        operation_unit=selected_unit,
+                        operation_unit="CENTRAL",
                     )
                     st.success("Item cadastrado com sucesso.")
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Não foi possível cadastrar: {exc}")
 
-    items_df = pd.DataFrame(list_items(operation_unit=selected_unit, active_only=False))
+    items_df = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=False))
     if items_df.empty:
         st.warning("Nenhum item cadastrado ainda.")
     else:
@@ -170,15 +181,68 @@ if menu == "Cadastro de Itens":
                         active=bool(new_active),
                     )
                     st.success("Cadastro atualizado com sucesso.")
-                    items_df = pd.DataFrame(list_items(operation_unit=selected_unit, active_only=False))
+                    items_df = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=False))
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Não foi possível atualizar item: {exc}")
 
         items_df["laundry_unit_cost"] = pd.to_numeric(items_df["laundry_unit_cost"], errors="coerce").fillna(0.0)
         st.dataframe(items_df, use_container_width=True, hide_index=True)
 
+elif menu == "Transferir Central -> Unidade":
+    st.subheader("Transferência do estoque CENTRAL para HOTEL/CLUB")
+    central_items = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=True))
+    if central_items.empty:
+        st.warning("Cadastre itens no estoque CENTRAL antes de transferir.")
+    else:
+        transfer_options = []
+        transfer_map: dict[str, int] = {}
+        for _, row in central_items.iterrows():
+            stock = get_item_theoretical_stock(int(row["id"]), as_of_date)
+            label = f"{row['name']} (saldo central: {stock})"
+            transfer_options.append(label)
+            transfer_map[label] = int(row["id"])
+
+        with st.form("form-transfer-central", clear_on_submit=True):
+            t1, t2, t3, t4 = st.columns(4)
+            selected_label = t1.selectbox("Item do CENTRAL", options=transfer_options)
+            target_unit = t2.selectbox("Destino", options=["HOTEL", "CLUB"])
+            qty = t3.number_input("Quantidade a transferir", min_value=1, step=1, value=1)
+            transfer_date = t4.date_input("Data da transferência", value=date.today())
+            x1, x2, x3 = st.columns(3)
+            unit_laundry_cost = x1.number_input(
+                "Valor da lavagem no destino (R$)",
+                min_value=0.0,
+                step=0.1,
+                value=0.0,
+                help="Se o item já existir na unidade e informar valor > 0, atualiza o valor.",
+            )
+            source_ref = x2.text_input("Referência", placeholder="NF, ordem interna")
+            note = x3.text_input("Observação")
+            transfer_submitted = st.form_submit_button("Transferir")
+            if transfer_submitted:
+                try:
+                    central_item_id = transfer_map[selected_label]
+                    result = transfer_central_to_unit(
+                        central_item_id=central_item_id,
+                        target_unit=target_unit,
+                        quantity=int(qty),
+                        movement_date=transfer_date,
+                        laundry_unit_cost=float(unit_laundry_cost),
+                        source_ref=source_ref,
+                        note=note,
+                    )
+                    st.success(
+                        f"Transferência concluída. Item CENTRAL #{result['central_item_id']} -> "
+                        f"item {target_unit} #{result['target_item_id']} ({result['quantity']} un.)."
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Falha na transferência: {exc}")
+
 elif menu == "Lançamentos Lavanderia":
     st.subheader(f"Lançamentos da lavanderia - {UNIT_OPTIONS[selected_unit]}")
+    if selected_unit == "CENTRAL":
+        st.warning("Lavanderia deve ser lançada em HOTEL ou CLUB. O CENTRAL não envia para lavanderia.")
+        st.stop()
     st.info(
         "Use os tipos de relavagem quando o lote retorna mal lavado. "
         "Essas peças voltam para a lavanderia sem nova cobrança."
@@ -242,10 +306,14 @@ elif menu == "Lançamentos Lavanderia":
 
 elif menu == "Estoque Central e de Uso":
     st.subheader(f"Estoque central e de uso - {UNIT_OPTIONS[selected_unit]}")
-    st.caption(
-        "Controle separado de entradas no estoque central, transferências para estoque de uso, "
-        "retorno de uso e perdas."
-    )
+    if selected_unit == "CENTRAL":
+        st.caption("Entrada de compras e ajustes do estoque central.")
+        operational_labels = CENTRAL_STOCK_LABELS
+    else:
+        st.caption(
+            "Controle de estoque da unidade, estoque de uso (alocação/retorno) e perdas."
+        )
+        operational_labels = UNIT_STOCK_LABELS
     item_map = _items_map(selected_unit)
     if not item_map:
         st.warning("Cadastre pelo menos um item antes de registrar movimentos.")
@@ -256,8 +324,8 @@ elif menu == "Estoque Central e de Uso":
             item_name = c2.selectbox("Item", options=sorted(item_map.keys()))
             movement_label = c3.selectbox(
                 "Tipo de movimento",
-                options=list(OPERATIONAL_LABELS.keys()),
-                help="Compras e entradas afetam o estoque central. Alocado para uso move para estoque de uso.",
+                options=list(operational_labels.keys()),
+                help="Use este módulo para ajustes de estoque e movimentação de uso diário.",
             )
             c4, c5, c6 = st.columns(3)
             quantity = c4.number_input("Quantidade", min_value=1, step=1, value=1)
@@ -268,7 +336,7 @@ elif menu == "Estoque Central e de Uso":
                 try:
                     add_movement(
                         item_id=item_map[item_name],
-                        movement_type=OPERATIONAL_LABELS[movement_label],
+                        movement_type=operational_labels[movement_label],
                         quantity=int(quantity),
                         movement_date=movement_date,
                         operation_unit=selected_unit,
@@ -281,7 +349,7 @@ elif menu == "Estoque Central e de Uso":
 
     recent_df = pd.DataFrame(list_recent_movements(limit=150, operation_unit=selected_unit))
     if not recent_df.empty:
-        recent_df = recent_df[recent_df["movement_type"].isin(set(OPERATIONAL_LABELS.values()))]
+        recent_df = recent_df[recent_df["movement_type"].isin(set(operational_labels.values()))]
     if not recent_df.empty:
         recent_df["tipo"] = recent_df["movement_type"].map(MOVEMENT_LABELS)
         st.dataframe(
@@ -302,6 +370,9 @@ elif menu == "Estoque Central e de Uso":
 
 elif menu == "Apuração Lavanderia (Planilha)":
     st.subheader(f"Apuração de cobrança da lavanderia - {UNIT_OPTIONS[selected_unit]}")
+    if selected_unit == "CENTRAL":
+        st.warning("Apuração de lavanderia é exclusiva de HOTEL ou CLUB.")
+        st.stop()
     st.caption(
         "Modelo de planilha com colunas diárias para validar cobrança quinzenal ou mensal, "
         "incluindo relave (sem cobrança) e perdas."
@@ -482,6 +553,9 @@ elif menu == "Painel de Controle":
 
 elif menu == "Auditoria IA":
     st.subheader(f"Auditoria IA de desfalque - {UNIT_OPTIONS[selected_unit]}")
+    if selected_unit == "CENTRAL":
+        st.warning("Auditoria IA operacional é exclusiva de HOTEL ou CLUB.")
+        st.stop()
     report = generate_audit_report(as_of_date=as_of_date, operation_unit=selected_unit)
     f1, f2 = st.columns(2)
     f1.metric("Score geral de risco (0-100)", report["overall_risk_score"])

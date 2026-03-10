@@ -67,7 +67,7 @@ def _usage_anomaly_score(series: list[dict[str, Any]]) -> tuple[int, str]:
     return score, description
 
 
-def generate_audit_report(as_of_date: date, operation_unit: str = "LA_PLAGE") -> dict[str, Any]:
+def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> dict[str, Any]:
     balances = get_balances(as_of_date, operation_unit=operation_unit)
     loss_last_7 = get_loss_totals(7, as_of_date, operation_unit=operation_unit)
     loss_prev_7 = get_loss_totals(7, as_of_date - timedelta(days=7), operation_unit=operation_unit)
