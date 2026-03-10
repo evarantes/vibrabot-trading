@@ -14,6 +14,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 ## O que o sistema faz
 
 1. **Cadastro de itens de enxoval** (lençol, toalha, fronha etc.)
+   - com edição completa (nome, categoria, par level, ativo, valor unitário de lavagem)
 2. **Lançamentos diários** de movimentação:
    - compra,
    - envio para lavanderia,
@@ -37,6 +38,10 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - valor total por item (valor unitário x total),
    - relave enviado/retornado (sem cobrança),
    - perdas no período.
+7. **Operação por unidade independente**:
+   - **La Plage** e **Club** com catálogos próprios de itens,
+   - preços de lavagem independentes,
+   - idas/voltas da lavanderia, relave e perdas independentes.
 
 ---
 
@@ -100,11 +105,11 @@ pytest
 
 ## Fluxo sugerido de operação diária
 
-1. Escolher unidade no menu lateral (`HOTEL` ou `CLUB`).
-2. Cadastrar itens na tela **Cadastro de Itens** (cadastro único).
+1. Escolher unidade no menu lateral (`LA_PLAGE` ou `CLUB`).
+2. Cadastrar/editar itens na tela **Cadastro de Itens** (catálogo por unidade).
 3. Registrar envios/retornos da lavanderia na tela **Lançamentos Lavanderia**.
 4. Usar **Relavagem** quando lote retorna mal lavado (sem cobrança extra).
-5. Registrar compras, uso e perdas em **Lançamentos Operacionais**.
+5. Registrar compras, transferências central/uso e perdas em **Estoque Central e de Uso**.
 6. Fazer contagem física diária em **Contagem Física**.
 7. Acompanhar posições em **Painel de Controle** e investigar alertas em **Auditoria IA**.
 8. Validar cobrança na tela **Apuração Lavanderia (Planilha)** para quinzena/mensalidade.

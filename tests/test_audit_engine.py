@@ -82,13 +82,15 @@ def test_separacao_por_unidade_hotel_e_club(tmp_path):
     _prepare_tmp_db(tmp_path)
     today = date.today()
 
-    add_item("Fronha premium", "Roupa de cama", par_level=10)
-    item_id = list_items()[0]["id"]
+    add_item("Fronha premium", "Roupa de cama", par_level=10, operation_unit="LA_PLAGE")
+    add_item("Fronha premium", "Roupa de cama", par_level=10, operation_unit="CLUB")
+    item_hotel_id = list_items(operation_unit="LA_PLAGE")[0]["id"]
+    item_club_id = list_items(operation_unit="CLUB")[0]["id"]
 
-    add_movement(item_id, "PURCHASE", 40, today, operation_unit="HOTEL")
-    add_movement(item_id, "PURCHASE", 15, today, operation_unit="CLUB")
+    add_movement(item_hotel_id, "PURCHASE", 40, today, operation_unit="LA_PLAGE")
+    add_movement(item_club_id, "PURCHASE", 15, today, operation_unit="CLUB")
 
-    balance_hotel = get_balances(today, operation_unit="HOTEL")[0]
+    balance_hotel = get_balances(today, operation_unit="LA_PLAGE")[0]
     balance_club = get_balances(today, operation_unit="CLUB")[0]
 
     assert int(balance_hotel["stock_theoretical"]) == 40
@@ -99,8 +101,8 @@ def test_relavagem_controlada_sem_cobranca(tmp_path):
     _prepare_tmp_db(tmp_path)
     today = date.today()
 
-    add_item("Toalha piscina", "Banho", par_level=10)
-    item_id = list_items()[0]["id"]
+    add_item("Toalha piscina", "Banho", par_level=10, operation_unit="CLUB")
+    item_id = list_items(operation_unit="CLUB")[0]["id"]
 
     add_movement(item_id, "LAUNDRY_SENT", 30, today - timedelta(days=2), operation_unit="CLUB")
     add_movement(item_id, "LAUNDRY_REWASH_SENT", 8, today - timedelta(days=1), operation_unit="CLUB")
@@ -117,14 +119,16 @@ def test_apuracao_planilha_por_periodo(tmp_path):
     base_date = date(2026, 3, 15)
 
     add_item("Toalha de praia", "Banho", par_level=10, laundry_unit_cost=2.5)
+    add_item("Toalha de praia", "Banho", par_level=10, laundry_unit_cost=3.0, operation_unit="CLUB")
     item_id = list_items()[0]["id"]
+    item_id_club = list_items(operation_unit="CLUB")[0]["id"]
 
     add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 1), operation_unit="HOTEL")
     add_movement(item_id, "LAUNDRY_SENT", 12, date(2026, 3, 2), operation_unit="HOTEL")
     add_movement(item_id, "LAUNDRY_REWASH_SENT", 3, date(2026, 3, 2), operation_unit="HOTEL")
     add_movement(item_id, "LAUNDRY_REWASH_RETURNED", 2, date(2026, 3, 3), operation_unit="HOTEL")
     add_movement(item_id, "LOSS", 1, date(2026, 3, 4), operation_unit="HOTEL")
-    add_movement(item_id, "LAUNDRY_SENT", 7, date(2026, 3, 5), operation_unit="CLUB")
+    add_movement(item_id_club, "LAUNDRY_SENT", 7, date(2026, 3, 5), operation_unit="CLUB")
 
     report = get_laundry_period_item_report(
         start_date=date(2026, 3, 1),

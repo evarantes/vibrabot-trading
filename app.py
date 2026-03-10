@@ -22,7 +22,7 @@ from codexiaauditor.repository import (
     get_laundry_period_item_report,
     list_items,
     list_recent_movements,
-    update_item_laundry_cost,
+    update_item,
     upsert_inventory_count,
 )
 
@@ -31,18 +31,17 @@ init_db()
 
 MOVEMENT_LABELS = {
     "PURCHASE": "Compra de enxoval",
-    "STOCK_IN": "Entrada manual no estoque",
-    "STOCK_OUT": "Saída manual do estoque",
+    "STOCK_IN": "Ajuste de entrada no estoque central",
+    "STOCK_OUT": "Ajuste de saída no estoque central",
     "LAUNDRY_SENT": "Enviado para lavanderia (cobrado)",
     "LAUNDRY_RETURNED": "Retorno da lavanderia (cobrado)",
     "LAUNDRY_REWASH_SENT": "Relavagem: reenviado sem cobrança",
     "LAUNDRY_REWASH_RETURNED": "Relavagem: retorno sem cobrança",
-    "IN_USE_ALLOCATED": "Alocado para uso (operação)",
-    "IN_USE_RETURNED": "Retorno de uso para estoque",
+    "IN_USE_ALLOCATED": "Transferido para estoque de uso",
+    "IN_USE_RETURNED": "Retorno de uso para estoque central",
     "LOSS": "Perda / baixa por avaria ou extravio",
 }
 LABEL_TO_MOVEMENT = {v: k for k, v in MOVEMENT_LABELS.items()}
-UNIT_OPTIONS = {"HOTEL": "Hotel", "CLUB": "Club"}
 
 LAUNDRY_LABELS = {
     "Enviado para lavanderia (cobrado)": "LAUNDRY_SENT",
@@ -52,16 +51,19 @@ LAUNDRY_LABELS = {
 }
 OPERATIONAL_LABELS = {
     "Compra de enxoval": "PURCHASE",
-    "Entrada manual no estoque": "STOCK_IN",
-    "Saída manual do estoque": "STOCK_OUT",
-    "Alocado para uso (operação)": "IN_USE_ALLOCATED",
-    "Retorno de uso para estoque": "IN_USE_RETURNED",
+    "Ajuste de entrada no estoque central": "STOCK_IN",
+    "Ajuste de saída no estoque central": "STOCK_OUT",
+    "Transferir do estoque central para estoque de uso": "IN_USE_ALLOCATED",
+    "Retornar do estoque de uso para estoque central": "IN_USE_RETURNED",
     "Perda / baixa por avaria ou extravio": "LOSS",
 }
 
 
-def _items_map() -> dict[str, int]:
-    return {row["name"]: int(row["id"]) for row in list_items()}
+UNIT_OPTIONS = {"LA_PLAGE": "La Plage", "CLUB": "Club"}
+
+
+def _items_map(operation_unit: str) -> dict[str, int]:
+    return {row["name"]: int(row["id"]) for row in list_items(operation_unit=operation_unit)}
 
 
 def _period_bounds(period_mode: str, reference_date: date, custom_start: date, custom_end: date) -> tuple[date, date]:
@@ -96,7 +98,7 @@ menu = st.sidebar.radio(
     options=[
         "Cadastro de Itens",
         "Lançamentos Lavanderia",
-        "Lançamentos Operacionais",
+        "Estoque Central e de Uso",
         "Apuração Lavanderia (Planilha)",
         "Contagem Física",
         "Painel de Controle",
@@ -130,28 +132,47 @@ if menu == "Cadastro de Itens":
                         category=category,
                         par_level=int(par_level),
                         laundry_unit_cost=float(laundry_cost),
+                        operation_unit=selected_unit,
                     )
                     st.success("Item cadastrado com sucesso.")
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Não foi possível cadastrar: {exc}")
 
-    items_df = pd.DataFrame(list_items())
+    items_df = pd.DataFrame(list_items(operation_unit=selected_unit, active_only=False))
     if items_df.empty:
         st.warning("Nenhum item cadastrado ainda.")
     else:
-        with st.form("form-update-laundry-cost"):
-            c1, c2, c3 = st.columns(3)
-            item_name = c1.selectbox("Atualizar valor de lavagem do item", options=items_df["name"].tolist())
-            new_cost = c2.number_input("Novo valor unit. (R$)", min_value=0.0, step=0.1, value=0.0)
-            update_submitted = c3.form_submit_button("Atualizar valor")
+        with st.form("form-update-item"):
+            c1, c2 = st.columns(2)
+            item_name = c1.selectbox("Selecionar item para editar", options=items_df["name"].tolist())
+            current = items_df[items_df["name"] == item_name].iloc[0]
+            c3, c4, c5, c6, c7 = st.columns(5)
+            new_name = c3.text_input("Nome", value=str(current["name"]))
+            new_category = c4.text_input("Categoria", value=str(current["category"]))
+            new_par_level = c5.number_input("Par level", min_value=0, step=1, value=int(current["par_level"]))
+            new_cost = c6.number_input(
+                "Valor unit. lavagem (R$)",
+                min_value=0.0,
+                step=0.1,
+                value=float(current["laundry_unit_cost"] or 0.0),
+            )
+            new_active = c7.checkbox("Ativo", value=bool(current["active"]))
+            update_submitted = c2.form_submit_button("Salvar edição")
             if update_submitted:
                 try:
-                    item_id = int(items_df[items_df["name"] == item_name]["id"].iloc[0])
-                    update_item_laundry_cost(item_id=item_id, laundry_unit_cost=float(new_cost))
-                    st.success("Valor unitário de lavagem atualizado.")
-                    items_df = pd.DataFrame(list_items())
+                    item_id = int(current["id"])
+                    update_item(
+                        item_id=item_id,
+                        name=new_name,
+                        category=new_category,
+                        par_level=int(new_par_level),
+                        laundry_unit_cost=float(new_cost),
+                        active=bool(new_active),
+                    )
+                    st.success("Cadastro atualizado com sucesso.")
+                    items_df = pd.DataFrame(list_items(operation_unit=selected_unit, active_only=False))
                 except Exception as exc:  # noqa: BLE001
-                    st.error(f"Não foi possível atualizar valor: {exc}")
+                    st.error(f"Não foi possível atualizar item: {exc}")
 
         items_df["laundry_unit_cost"] = pd.to_numeric(items_df["laundry_unit_cost"], errors="coerce").fillna(0.0)
         st.dataframe(items_df, use_container_width=True, hide_index=True)
@@ -162,7 +183,7 @@ elif menu == "Lançamentos Lavanderia":
         "Use os tipos de relavagem quando o lote retorna mal lavado. "
         "Essas peças voltam para a lavanderia sem nova cobrança."
     )
-    item_map = _items_map()
+    item_map = _items_map(selected_unit)
     if not item_map:
         st.warning("Cadastre pelo menos um item antes de lançar movimentações da lavanderia.")
     else:
@@ -219,9 +240,13 @@ elif menu == "Lançamentos Lavanderia":
             hide_index=True,
         )
 
-elif menu == "Lançamentos Operacionais":
-    st.subheader(f"Lançamentos operacionais - {UNIT_OPTIONS[selected_unit]}")
-    item_map = _items_map()
+elif menu == "Estoque Central e de Uso":
+    st.subheader(f"Estoque central e de uso - {UNIT_OPTIONS[selected_unit]}")
+    st.caption(
+        "Controle separado de entradas no estoque central, transferências para estoque de uso, "
+        "retorno de uso e perdas."
+    )
+    item_map = _items_map(selected_unit)
     if not item_map:
         st.warning("Cadastre pelo menos um item antes de registrar movimentos.")
     else:
@@ -229,7 +254,11 @@ elif menu == "Lançamentos Operacionais":
             c1, c2, c3 = st.columns(3)
             movement_date = c1.date_input("Data do movimento", value=date.today())
             item_name = c2.selectbox("Item", options=sorted(item_map.keys()))
-            movement_label = c3.selectbox("Tipo de movimento", options=list(OPERATIONAL_LABELS.keys()))
+            movement_label = c3.selectbox(
+                "Tipo de movimento",
+                options=list(OPERATIONAL_LABELS.keys()),
+                help="Compras e entradas afetam o estoque central. Alocado para uso move para estoque de uso.",
+            )
             c4, c5, c6 = st.columns(3)
             quantity = c4.number_input("Quantidade", min_value=1, step=1, value=1)
             source_ref = c5.text_input("Referência", placeholder="NF, ordem interna")
@@ -341,7 +370,7 @@ elif menu == "Apuração Lavanderia (Planilha)":
 
 elif menu == "Contagem Física":
     st.subheader("Contagem física (fechamento diário)")
-    item_map = _items_map()
+    item_map = _items_map(selected_unit)
     if not item_map:
         st.warning("Cadastre itens antes de lançar contagem física.")
     else:

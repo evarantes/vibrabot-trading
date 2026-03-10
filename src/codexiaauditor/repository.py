@@ -17,13 +17,20 @@ MOVEMENT_TYPES = {
     "IN_USE_RETURNED",
     "LOSS",
 }
-OPERATION_UNITS = {"HOTEL", "CLUB"}
+OPERATION_UNITS = {"LA_PLAGE", "CLUB"}
 
 
 def _normalize_unit(operation_unit: str) -> str:
-    unit = operation_unit.strip().upper()
+    raw = operation_unit.strip().upper()
+    aliases = {
+        "HOTEL": "LA_PLAGE",
+        "LA PLAGE": "LA_PLAGE",
+        "LAPLAGE": "LA_PLAGE",
+        "CLUBE": "CLUB",
+    }
+    unit = aliases.get(raw, raw)
     if unit not in OPERATION_UNITS:
-        raise ValueError(f"Unidade inválida: {operation_unit}. Use HOTEL ou CLUB.")
+        raise ValueError(f"Unidade inválida: {operation_unit}. Use LA_PLAGE ou CLUB.")
     return unit
 
 
@@ -33,36 +40,72 @@ def _to_date(raw_value: Any) -> date:
     return date.fromisoformat(str(raw_value))
 
 
-def add_item(name: str, category: str, par_level: int = 0, laundry_unit_cost: float = 0.0) -> None:
+def add_item(
+    name: str,
+    category: str,
+    par_level: int = 0,
+    laundry_unit_cost: float = 0.0,
+    operation_unit: str = "LA_PLAGE",
+) -> None:
+    unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         execute(
             conn,
             """
-            INSERT INTO items (name, category, par_level, laundry_unit_cost)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO items (name, operation_unit, category, par_level, laundry_unit_cost)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (name.strip(), category.strip(), max(par_level, 0), max(float(laundry_unit_cost), 0.0)),
+            (
+                name.strip(),
+                unit,
+                category.strip(),
+                max(par_level, 0),
+                max(float(laundry_unit_cost), 0.0),
+            ),
         )
 
 
-def update_item_laundry_cost(item_id: int, laundry_unit_cost: float) -> None:
+def update_item(
+    item_id: int,
+    name: str,
+    category: str,
+    par_level: int,
+    laundry_unit_cost: float,
+    active: bool = True,
+) -> None:
     with get_connection() as conn:
         execute(
             conn,
             """
             UPDATE items
-            SET laundry_unit_cost = ?
+            SET
+                name = ?,
+                category = ?,
+                par_level = ?,
+                laundry_unit_cost = ?,
+                active = ?
             WHERE id = ?
             """,
-            (max(float(laundry_unit_cost), 0.0), item_id),
+            (
+                name.strip(),
+                category.strip(),
+                max(par_level, 0),
+                max(float(laundry_unit_cost), 0.0),
+                bool(active),
+                item_id,
+            ),
         )
 
 
-def list_items(active_only: bool = True) -> list[dict[str, Any]]:
-    query = "SELECT id, name, category, par_level, laundry_unit_cost, active FROM items"
-    params: list[Any] = []
+def list_items(operation_unit: str = "LA_PLAGE", active_only: bool = True) -> list[dict[str, Any]]:
+    unit = _normalize_unit(operation_unit)
+    query = (
+        "SELECT id, name, operation_unit, category, par_level, laundry_unit_cost, active "
+        "FROM items WHERE operation_unit = ?"
+    )
+    params: list[Any] = [unit]
     if active_only:
-        query += " WHERE active = TRUE"
+        query += " AND active = TRUE"
     query += " ORDER BY name"
 
     with get_connection() as conn:
@@ -75,7 +118,7 @@ def add_movement(
     movement_type: str,
     quantity: int,
     movement_date: date,
-    operation_unit: str = "HOTEL",
+    operation_unit: str = "LA_PLAGE",
     source_ref: str = "",
     note: str = "",
 ) -> None:
@@ -86,6 +129,14 @@ def add_movement(
     unit = _normalize_unit(operation_unit)
 
     with get_connection() as conn:
+        row = execute(
+            conn,
+            "SELECT id FROM items WHERE id = ? AND operation_unit = ?",
+            (item_id, unit),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Item não pertence à unidade selecionada.")
+
         execute(
             conn,
             """
@@ -118,7 +169,7 @@ def upsert_inventory_count(
     counted_stock: int,
     counted_laundry: int = 0,
     counted_in_use: int = 0,
-    operation_unit: str = "HOTEL",
+    operation_unit: str = "LA_PLAGE",
     note: str = "",
 ) -> None:
     unit = _normalize_unit(operation_unit)
@@ -175,7 +226,7 @@ def upsert_inventory_count(
         )
 
 
-def get_balances(as_of_date: date, operation_unit: str = "HOTEL") -> list[dict[str, Any]]:
+def get_balances(as_of_date: date, operation_unit: str = "LA_PLAGE") -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         rows = execute(
@@ -266,14 +317,15 @@ def get_balances(as_of_date: date, operation_unit: str = "HOTEL") -> list[dict[s
             LEFT JOIN move m ON m.item_id = i.id
             LEFT JOIN latest_count lc ON lc.item_id = i.id
             WHERE i.active = TRUE
+              AND i.operation_unit = ?
             ORDER BY i.name
             """,
-            (as_of_date.isoformat(), unit, as_of_date.isoformat(), unit),
+            (as_of_date.isoformat(), unit, as_of_date.isoformat(), unit, unit),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def list_recent_movements(limit: int = 200, operation_unit: str = "HOTEL") -> list[dict[str, Any]]:
+def list_recent_movements(limit: int = 200, operation_unit: str = "LA_PLAGE") -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         rows = execute(
@@ -303,7 +355,7 @@ def get_daily_allocated_usage(
     item_id: int,
     days: int = 30,
     ref_date: date | None = None,
-    operation_unit: str = "HOTEL",
+    operation_unit: str = "LA_PLAGE",
 ) -> list[dict[str, Any]]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -334,7 +386,7 @@ def get_daily_allocated_usage(
     return [dict(row) for row in rows]
 
 
-def get_laundry_movements(item_id: int, as_of_date: date, operation_unit: str = "HOTEL") -> list[dict[str, Any]]:
+def get_laundry_movements(item_id: int, as_of_date: date, operation_unit: str = "LA_PLAGE") -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
         rows = execute(
@@ -358,7 +410,7 @@ def get_laundry_movements(item_id: int, as_of_date: date, operation_unit: str = 
     return [dict(row) for row in rows]
 
 
-def get_loss_totals(days: int, ref_date: date | None = None, operation_unit: str = "HOTEL") -> dict[int, int]:
+def get_loss_totals(days: int, ref_date: date | None = None, operation_unit: str = "LA_PLAGE") -> dict[int, int]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
     unit = _normalize_unit(operation_unit)
@@ -381,7 +433,7 @@ def get_loss_totals(days: int, ref_date: date | None = None, operation_unit: str
 def get_daily_movement_totals(
     days: int = 30,
     ref_date: date | None = None,
-    operation_unit: str = "HOTEL",
+    operation_unit: str = "LA_PLAGE",
 ) -> list[dict[str, Any]]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -414,7 +466,7 @@ def get_daily_movement_totals(
 def get_laundry_billing_summary(
     days: int = 30,
     ref_date: date | None = None,
-    operation_unit: str = "HOTEL",
+    operation_unit: str = "LA_PLAGE",
 ) -> dict[str, int]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -449,7 +501,7 @@ def get_laundry_billing_summary(
 def get_laundry_period_item_report(
     start_date: date,
     end_date: date,
-    operation_unit: str = "HOTEL",
+    operation_unit: str = "LA_PLAGE",
 ) -> list[dict[str, Any]]:
     unit = _normalize_unit(operation_unit)
     with get_connection() as conn:
@@ -471,10 +523,11 @@ def get_laundry_period_item_report(
                AND m.operation_unit = ?
                AND m.movement_date BETWEEN ? AND ?
             WHERE i.active = TRUE
+              AND i.operation_unit = ?
             GROUP BY i.id, i.name, i.laundry_unit_cost, m.movement_date
             ORDER BY i.name, m.movement_date
             """,
-            (unit, start_date.isoformat(), end_date.isoformat()),
+            (unit, start_date.isoformat(), end_date.isoformat(), unit),
         ).fetchall()
 
     report_map: dict[int, dict[str, Any]] = {}
