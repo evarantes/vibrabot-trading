@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  items       Item[]
+}
+
+model Item {
+  id          String   @id @default(uuid())
+  categoryId  String
+  name        String
+  description String?
+  unit        String   @default("unidade")
+  minStock    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category       Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  purchases      Purchase[]
+  laundryRecords LaundryRecord[]
+  stockCounts    StockCount[]
+  roomUsages     RoomUsage[]
+
+  @@unique([categoryId, name])
+}
+
+model Purchase {
+  id            String   @id @default(uuid())
+  itemId        String
+  quantity      Int
+  unitPrice     Float    @default(0)
+  totalPrice    Float    @default(0)
+  supplier      String?
+  invoiceNumber String?
+  purchaseDate  DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model LaundryRecord {
+  id               String   @id @default(uuid())
+  itemId           String
+  date             DateTime
+  sentQuantity     Int      @default(0)
+  returnedQuantity Int      @default(0)
+  damagedQuantity  Int      @default(0)
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, date])
+}
+
+model StockCount {
+  id       String   @id @default(uuid())
+  itemId   String
+  date     DateTime
+  quantity Int
+  location String?
+  notes    String?
+  createdAt DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, date])
+}
+
+model RoomUsage {
+  id         String   @id @default(uuid())
+  itemId     String
+  date       DateTime
+  roomNumber String
+  quantity   Int      @default(1)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model AuditReport {
+  id              String   @id @default(uuid())
+  date            DateTime
+  totalPurchased  Int      @default(0)
+  totalStock      Int      @default(0)
+  totalInLaundry  Int      @default(0)
+  totalInUse      Int      @default(0)
+  totalMissing    Int      @default(0)
+  percentMissing  Float    @default(0)
+  findings        String
+  recommendations String
+  riskLevel       String   @default("baixo")
+  status          String   @default("pendente")
+  createdAt       DateTime @default(now())
+}
