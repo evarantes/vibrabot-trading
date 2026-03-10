@@ -93,6 +93,7 @@ def _init_postgres() -> None:
             CREATE TABLE IF NOT EXISTS movements (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 item_id BIGINT NOT NULL REFERENCES items(id),
+                operation_unit TEXT NOT NULL DEFAULT 'HOTEL',
                 movement_type TEXT NOT NULL,
                 quantity INTEGER NOT NULL CHECK(quantity > 0),
                 movement_date DATE NOT NULL,
@@ -108,14 +109,48 @@ def _init_postgres() -> None:
             CREATE TABLE IF NOT EXISTS inventory_counts (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 item_id BIGINT NOT NULL REFERENCES items(id),
+                operation_unit TEXT NOT NULL DEFAULT 'HOTEL',
                 count_date DATE NOT NULL,
                 counted_stock INTEGER NOT NULL DEFAULT 0 CHECK(counted_stock >= 0),
                 counted_laundry INTEGER NOT NULL DEFAULT 0 CHECK(counted_laundry >= 0),
                 counted_in_use INTEGER NOT NULL DEFAULT 0 CHECK(counted_in_use >= 0),
                 note TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(item_id, count_date)
+                UNIQUE(item_id, count_date, operation_unit)
             );
+            """,
+        )
+        execute(
+            conn,
+            """
+            ALTER TABLE movements
+            ADD COLUMN IF NOT EXISTS operation_unit TEXT NOT NULL DEFAULT 'HOTEL';
+            """,
+        )
+        execute(
+            conn,
+            """
+            ALTER TABLE inventory_counts
+            ADD COLUMN IF NOT EXISTS operation_unit TEXT NOT NULL DEFAULT 'HOTEL';
+            """,
+        )
+        execute(
+            conn,
+            "UPDATE movements SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit = '';",
+        )
+        execute(
+            conn,
+            "UPDATE inventory_counts SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit = '';",
+        )
+        execute(
+            conn,
+            "ALTER TABLE inventory_counts DROP CONSTRAINT IF EXISTS inventory_counts_item_id_count_date_key;",
+        )
+        execute(
+            conn,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_counts_item_date_unit
+            ON inventory_counts (item_id, count_date, operation_unit);
             """,
         )
 
@@ -138,6 +173,7 @@ def _init_sqlite() -> None:
             CREATE TABLE IF NOT EXISTS movements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 item_id INTEGER NOT NULL,
+                operation_unit TEXT NOT NULL DEFAULT 'HOTEL',
                 movement_type TEXT NOT NULL,
                 quantity INTEGER NOT NULL CHECK(quantity > 0),
                 movement_date TEXT NOT NULL,
@@ -150,15 +186,30 @@ def _init_sqlite() -> None:
             CREATE TABLE IF NOT EXISTS inventory_counts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 item_id INTEGER NOT NULL,
+                operation_unit TEXT NOT NULL DEFAULT 'HOTEL',
                 count_date TEXT NOT NULL,
                 counted_stock INTEGER NOT NULL DEFAULT 0 CHECK(counted_stock >= 0),
                 counted_laundry INTEGER NOT NULL DEFAULT 0 CHECK(counted_laundry >= 0),
                 counted_in_use INTEGER NOT NULL DEFAULT 0 CHECK(counted_in_use >= 0),
                 note TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(item_id, count_date),
+                UNIQUE(item_id, count_date, operation_unit),
                 FOREIGN KEY (item_id) REFERENCES items(id)
             );
             """
         )
+        _ensure_sqlite_column(conn, "movements", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
+        _ensure_sqlite_column(conn, "inventory_counts", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
+        conn.execute("UPDATE movements SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit = ''")
+        conn.execute(
+            "UPDATE inventory_counts SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit = ''"
+        )
+
+
+def _ensure_sqlite_column(conn: Any, table_name: str, column_name: str, column_sql: str) -> None:
+    info = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    columns = {row[1] for row in info}
+    if column_name in columns:
+        return
+    conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 

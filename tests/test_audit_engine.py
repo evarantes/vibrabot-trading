@@ -3,7 +3,14 @@ from datetime import date, timedelta
 
 from codexiaauditor import database
 from codexiaauditor.audit_engine import generate_audit_report
-from codexiaauditor.repository import add_item, add_movement, list_items, upsert_inventory_count
+from codexiaauditor.repository import (
+    add_item,
+    add_movement,
+    get_balances,
+    get_laundry_billing_summary,
+    list_items,
+    upsert_inventory_count,
+)
 
 
 def _prepare_tmp_db(tmp_path):
@@ -68,3 +75,37 @@ def test_audit_without_findings_when_balanced(tmp_path):
     assert report["overall_risk_score"] == 0
     assert report["items_with_alert"] == 0
     assert report["findings"] == []
+
+
+def test_separacao_por_unidade_hotel_e_club(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    today = date.today()
+
+    add_item("Fronha premium", "Roupa de cama", par_level=10)
+    item_id = list_items()[0]["id"]
+
+    add_movement(item_id, "PURCHASE", 40, today, operation_unit="HOTEL")
+    add_movement(item_id, "PURCHASE", 15, today, operation_unit="CLUB")
+
+    balance_hotel = get_balances(today, operation_unit="HOTEL")[0]
+    balance_club = get_balances(today, operation_unit="CLUB")[0]
+
+    assert int(balance_hotel["stock_theoretical"]) == 40
+    assert int(balance_club["stock_theoretical"]) == 15
+
+
+def test_relavagem_controlada_sem_cobranca(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    today = date.today()
+
+    add_item("Toalha piscina", "Banho", par_level=10)
+    item_id = list_items()[0]["id"]
+
+    add_movement(item_id, "LAUNDRY_SENT", 30, today - timedelta(days=2), operation_unit="CLUB")
+    add_movement(item_id, "LAUNDRY_REWASH_SENT", 8, today - timedelta(days=1), operation_unit="CLUB")
+    add_movement(item_id, "LAUNDRY_RETURNED", 25, today, operation_unit="CLUB")
+    add_movement(item_id, "LAUNDRY_REWASH_RETURNED", 5, today, operation_unit="CLUB")
+
+    summary = get_laundry_billing_summary(days=7, ref_date=today, operation_unit="CLUB")
+    assert summary["billed_sent"] == 30
+    assert summary["rewash_sent"] == 8

@@ -17,6 +17,7 @@ from codexiaauditor.repository import (
     add_movement,
     get_balances,
     get_daily_movement_totals,
+    get_laundry_billing_summary,
     list_items,
     list_recent_movements,
     upsert_inventory_count,
@@ -29,36 +30,64 @@ MOVEMENT_LABELS = {
     "PURCHASE": "Compra de enxoval",
     "STOCK_IN": "Entrada manual no estoque",
     "STOCK_OUT": "Saída manual do estoque",
-    "LAUNDRY_SENT": "Enviado para lavanderia",
-    "LAUNDRY_RETURNED": "Retorno da lavanderia",
+    "LAUNDRY_SENT": "Enviado para lavanderia (cobrado)",
+    "LAUNDRY_RETURNED": "Retorno da lavanderia (cobrado)",
+    "LAUNDRY_REWASH_SENT": "Relavagem: reenviado sem cobrança",
+    "LAUNDRY_REWASH_RETURNED": "Relavagem: retorno sem cobrança",
     "IN_USE_ALLOCATED": "Alocado para uso (operação)",
     "IN_USE_RETURNED": "Retorno de uso para estoque",
     "LOSS": "Perda / baixa por avaria ou extravio",
 }
 LABEL_TO_MOVEMENT = {v: k for k, v in MOVEMENT_LABELS.items()}
+UNIT_OPTIONS = {"HOTEL": "Hotel", "CLUB": "Club"}
+
+LAUNDRY_LABELS = {
+    "Enviado para lavanderia (cobrado)": "LAUNDRY_SENT",
+    "Retorno da lavanderia (cobrado)": "LAUNDRY_RETURNED",
+    "Relavagem: reenviado sem cobrança": "LAUNDRY_REWASH_SENT",
+    "Relavagem: retorno sem cobrança": "LAUNDRY_REWASH_RETURNED",
+}
+OPERATIONAL_LABELS = {
+    "Compra de enxoval": "PURCHASE",
+    "Entrada manual no estoque": "STOCK_IN",
+    "Saída manual do estoque": "STOCK_OUT",
+    "Alocado para uso (operação)": "IN_USE_ALLOCATED",
+    "Retorno de uso para estoque": "IN_USE_RETURNED",
+    "Perda / baixa por avaria ou extravio": "LOSS",
+}
 
 
 def _items_map() -> dict[str, int]:
     return {row["name"]: int(row["id"]) for row in list_items()}
 
 
-st.title("CODEXIAAUDITOR")
-st.caption("Auditoria inteligente de enxoval hoteleiro (compras, estoque, lavanderia e uso diário)")
-
-as_of_date = st.sidebar.date_input("Data de referência da auditoria", value=date.today())
+st.sidebar.title("Menu")
+selected_unit = st.sidebar.selectbox(
+    "Unidade para auditoria",
+    options=list(UNIT_OPTIONS.keys()),
+    format_func=lambda x: UNIT_OPTIONS[x],
+)
+as_of_date = st.sidebar.date_input("Dados de referência de auditoria", value=date.today())
+menu = st.sidebar.radio(
+    "Módulos",
+    options=[
+        "Cadastro de Itens",
+        "Lançamentos Lavanderia",
+        "Lançamentos Operacionais",
+        "Contagem Física",
+        "Painel de Controle",
+        "Auditoria IA",
+    ],
+)
 st.sidebar.info("Dica: registre movimentos diariamente e faça contagem física no fechamento.")
 
-tabs = st.tabs(
-    [
-        "1) Cadastro de Itens",
-        "2) Lançamentos Diários",
-        "3) Contagem Física",
-        "4) Dashboard",
-        "5) Auditoria IA",
-    ]
+st.title("AUDITOR CODEXIA")
+st.caption(
+    f"Unidade selecionada: **{UNIT_OPTIONS[selected_unit]}** | "
+    "Auditoria inteligente de enxoval (compras, estoque, lavanderia e uso diário)"
 )
 
-with tabs[0]:
+if menu == "Cadastro de Itens":
     st.subheader("Cadastrar item de enxoval")
     with st.form("form-item", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -82,29 +111,34 @@ with tabs[0]:
     else:
         st.dataframe(items_df, use_container_width=True, hide_index=True)
 
-with tabs[1]:
-    st.subheader("Registrar movimentos diários")
+elif menu == "Lançamentos Lavanderia":
+    st.subheader(f"Lançamentos da lavanderia - {UNIT_OPTIONS[selected_unit]}")
+    st.info(
+        "Use os tipos de relavagem quando o lote retorna mal lavado. "
+        "Essas peças voltam para a lavanderia sem nova cobrança."
+    )
     item_map = _items_map()
     if not item_map:
-        st.warning("Cadastre pelo menos um item antes de registrar movimentos.")
+        st.warning("Cadastre pelo menos um item antes de lançar movimentações da lavanderia.")
     else:
-        with st.form("form-movement", clear_on_submit=True):
+        with st.form("form-laundry", clear_on_submit=True):
             c1, c2, c3 = st.columns(3)
             movement_date = c1.date_input("Data do movimento", value=date.today())
             item_name = c2.selectbox("Item", options=sorted(item_map.keys()))
-            movement_label = c3.selectbox("Tipo de movimento", options=list(LABEL_TO_MOVEMENT.keys()))
+            movement_label = c3.selectbox("Tipo de movimento", options=list(LAUNDRY_LABELS.keys()))
             c4, c5, c6 = st.columns(3)
             quantity = c4.number_input("Quantidade", min_value=1, step=1, value=1)
             source_ref = c5.text_input("Referência", placeholder="NF, ordem interna, romaneio")
             note = c6.text_input("Observação")
-            move_submitted = st.form_submit_button("Salvar movimento")
+            move_submitted = st.form_submit_button("Salvar movimento da lavanderia")
             if move_submitted:
                 try:
                     add_movement(
                         item_id=item_map[item_name],
-                        movement_type=LABEL_TO_MOVEMENT[movement_label],
+                        movement_type=LAUNDRY_LABELS[movement_label],
                         quantity=int(quantity),
                         movement_date=movement_date,
+                        operation_unit=selected_unit,
                         source_ref=source_ref,
                         note=note,
                     )
@@ -112,7 +146,16 @@ with tabs[1]:
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Falha ao salvar movimento: {exc}")
 
-    recent_df = pd.DataFrame(list_recent_movements(limit=150))
+    summary = get_laundry_billing_summary(days=30, ref_date=as_of_date, operation_unit=selected_unit)
+    l1, l2, l3, l4 = st.columns(4)
+    l1.metric("Lavagens enviadas (cobradas - 30d)", int(summary["billed_sent"]))
+    l2.metric("Retornos cobrados (30d)", int(summary["billed_returned"]))
+    l3.metric("Relavagens enviadas sem cobrança (30d)", int(summary["rewash_sent"]))
+    l4.metric("Retornos de relavagem (30d)", int(summary["rewash_returned"]))
+
+    recent_df = pd.DataFrame(list_recent_movements(limit=200, operation_unit=selected_unit))
+    if not recent_df.empty:
+        recent_df = recent_df[recent_df["movement_type"].isin(set(LAUNDRY_LABELS.values()))]
     if not recent_df.empty:
         recent_df["tipo"] = recent_df["movement_type"].map(MOVEMENT_LABELS)
         st.dataframe(
@@ -131,7 +174,59 @@ with tabs[1]:
             hide_index=True,
         )
 
-with tabs[2]:
+elif menu == "Lançamentos Operacionais":
+    st.subheader(f"Lançamentos operacionais - {UNIT_OPTIONS[selected_unit]}")
+    item_map = _items_map()
+    if not item_map:
+        st.warning("Cadastre pelo menos um item antes de registrar movimentos.")
+    else:
+        with st.form("form-operational", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            movement_date = c1.date_input("Data do movimento", value=date.today())
+            item_name = c2.selectbox("Item", options=sorted(item_map.keys()))
+            movement_label = c3.selectbox("Tipo de movimento", options=list(OPERATIONAL_LABELS.keys()))
+            c4, c5, c6 = st.columns(3)
+            quantity = c4.number_input("Quantidade", min_value=1, step=1, value=1)
+            source_ref = c5.text_input("Referência", placeholder="NF, ordem interna")
+            note = c6.text_input("Observação")
+            move_submitted = st.form_submit_button("Salvar movimento")
+            if move_submitted:
+                try:
+                    add_movement(
+                        item_id=item_map[item_name],
+                        movement_type=OPERATIONAL_LABELS[movement_label],
+                        quantity=int(quantity),
+                        movement_date=movement_date,
+                        operation_unit=selected_unit,
+                        source_ref=source_ref,
+                        note=note,
+                    )
+                    st.success("Movimento registrado.")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Falha ao salvar movimento: {exc}")
+
+    recent_df = pd.DataFrame(list_recent_movements(limit=150, operation_unit=selected_unit))
+    if not recent_df.empty:
+        recent_df = recent_df[recent_df["movement_type"].isin(set(OPERATIONAL_LABELS.values()))]
+    if not recent_df.empty:
+        recent_df["tipo"] = recent_df["movement_type"].map(MOVEMENT_LABELS)
+        st.dataframe(
+            recent_df[
+                ["movement_date", "item_name", "tipo", "quantity", "source_ref", "note"]
+            ].rename(
+                columns={
+                    "movement_date": "data",
+                    "item_name": "item",
+                    "quantity": "quantidade",
+                    "source_ref": "referencia",
+                    "note": "observacao",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+elif menu == "Contagem Física":
     st.subheader("Contagem física (fechamento diário)")
     item_map = _items_map()
     if not item_map:
@@ -155,15 +250,16 @@ with tabs[2]:
                         counted_stock=int(counted_stock),
                         counted_laundry=int(counted_laundry),
                         counted_in_use=int(counted_in_use),
+                        operation_unit=selected_unit,
                         note=note,
                     )
                     st.success("Contagem registrada/atualizada.")
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Erro ao salvar contagem: {exc}")
 
-with tabs[3]:
-    st.subheader("Visão operacional do enxoval")
-    balances = pd.DataFrame(get_balances(as_of_date))
+elif menu == "Painel de Controle":
+    st.subheader(f"Painel de controle - {UNIT_OPTIONS[selected_unit]}")
+    balances = pd.DataFrame(get_balances(as_of_date, operation_unit=selected_unit))
     if balances.empty:
         st.info("Sem dados de saldo para a data selecionada.")
     else:
@@ -214,23 +310,44 @@ with tabs[3]:
         fig.update_layout(xaxis_title="Item", yaxis_title="Quantidade")
         st.plotly_chart(fig, use_container_width=True)
 
-        timeline_df = pd.DataFrame(get_daily_movement_totals(days=30, ref_date=as_of_date))
+        timeline_df = pd.DataFrame(
+            get_daily_movement_totals(days=30, ref_date=as_of_date, operation_unit=selected_unit)
+        )
         if not timeline_df.empty:
             st.markdown("**Últimos 30 dias de movimentações**")
             fig_line = px.line(
                 timeline_df,
                 x="movement_date",
-                y=["purchased", "laundry_sent", "laundry_returned", "allocated", "returned_use", "loss"],
+                y=[
+                    "purchased",
+                    "laundry_sent",
+                    "laundry_returned",
+                    "rewash_sent",
+                    "rewash_returned",
+                    "allocated",
+                    "returned_use",
+                    "loss",
+                ],
             )
             fig_line.update_layout(xaxis_title="Data", yaxis_title="Quantidade")
             st.plotly_chart(fig_line, use_container_width=True)
 
-with tabs[4]:
-    st.subheader("Auditoria IA de desfalque")
-    report = generate_audit_report(as_of_date=as_of_date)
+        summary = get_laundry_billing_summary(days=30, ref_date=as_of_date, operation_unit=selected_unit)
+        st.markdown("**Resumo de lavanderia (30 dias)**")
+        s1, s2 = st.columns(2)
+        s1.metric("Lavagem cobrada enviada", int(summary["billed_sent"]))
+        s2.metric("Relavagem sem cobrança enviada", int(summary["rewash_sent"]))
+
+elif menu == "Auditoria IA":
+    st.subheader(f"Auditoria IA de desfalque - {UNIT_OPTIONS[selected_unit]}")
+    report = generate_audit_report(as_of_date=as_of_date, operation_unit=selected_unit)
     f1, f2 = st.columns(2)
     f1.metric("Score geral de risco (0-100)", report["overall_risk_score"])
     f2.metric("Itens com alerta", report["items_with_alert"])
+
+    l1, l2 = st.columns(2)
+    l1.metric("Lavagens cobradas enviadas (30d)", int(report["laundry_summary_30d"]["billed_sent"]))
+    l2.metric("Relavagens sem cobrança enviadas (30d)", int(report["laundry_summary_30d"]["rewash_sent"]))
 
     findings_df = pd.DataFrame(report["findings"])
     if findings_df.empty:

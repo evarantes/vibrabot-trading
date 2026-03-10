@@ -18,6 +18,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - compra,
    - envio para lavanderia,
    - retorno da lavanderia,
+   - relavagem (reenvio sem cobrança e retorno),
    - alocação para uso,
    - retorno de uso,
    - perdas/baixas.
@@ -27,6 +28,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - score de risco geral,
    - divergências físico x teórico,
    - peças retidas na lavanderia por tempo anormal,
+   - taxa de relavagem por qualidade de lavagem,
    - tendências de perda,
    - ações recomendadas de investigação.
 
@@ -38,6 +40,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 - **Persistência principal:** PostgreSQL
 - **Núcleo de auditoria:** `src/codexiaauditor/audit_engine.py`
 - **Camada de dados:** `src/codexiaauditor/repository.py`
+- **Separação operacional:** unidade `HOTEL` e `CLUB`
 
 ---
 
@@ -91,11 +94,13 @@ pytest
 
 ## Fluxo sugerido de operação diária
 
-1. Registrar compras e movimentações de enxoval.
-2. Registrar o que foi e voltou da lavanderia.
-3. Registrar alocações e retornos de uso.
-4. Fazer contagem física no fechamento.
-5. Abrir aba **Auditoria IA** para investigar alertas e agir no mesmo dia.
+1. Escolher unidade no menu lateral (`HOTEL` ou `CLUB`).
+2. Cadastrar itens na tela **Cadastro de Itens** (cadastro único).
+3. Registrar envios/retornos da lavanderia na tela **Lançamentos Lavanderia**.
+4. Usar **Relavagem** quando lote retorna mal lavado (sem cobrança extra).
+5. Registrar compras, uso e perdas em **Lançamentos Operacionais**.
+6. Fazer contagem física diária em **Contagem Física**.
+7. Acompanhar posições em **Painel de Controle** e investigar alertas em **Auditoria IA**.
 
 ---
 

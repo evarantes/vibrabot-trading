@@ -7,6 +7,7 @@ from typing import Any
 from .repository import (
     get_balances,
     get_daily_allocated_usage,
+    get_laundry_billing_summary,
     get_laundry_movements,
     get_loss_totals,
 )
@@ -21,7 +22,7 @@ def _pending_laundry_info(movements: list[dict[str, Any]], as_of_date: date) -> 
         qty = int(move["quantity"])
         move_type = move["movement_type"]
 
-        if move_type == "LAUNDRY_SENT":
+        if move_type in {"LAUNDRY_SENT", "LAUNDRY_REWASH_SENT"}:
             pending_batches.append({"date": move_date, "qty": qty})
             continue
 
@@ -66,13 +67,15 @@ def _usage_anomaly_score(series: list[dict[str, Any]]) -> tuple[int, str]:
     return score, description
 
 
-def generate_audit_report(as_of_date: date) -> dict[str, Any]:
-    balances = get_balances(as_of_date)
-    loss_last_7 = get_loss_totals(7, as_of_date)
-    loss_prev_7 = get_loss_totals(7, as_of_date - timedelta(days=7))
+def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> dict[str, Any]:
+    balances = get_balances(as_of_date, operation_unit=operation_unit)
+    loss_last_7 = get_loss_totals(7, as_of_date, operation_unit=operation_unit)
+    loss_prev_7 = get_loss_totals(7, as_of_date - timedelta(days=7), operation_unit=operation_unit)
+    laundry_summary_30d = get_laundry_billing_summary(days=30, ref_date=as_of_date, operation_unit=operation_unit)
 
     findings: list[dict[str, Any]] = []
     risk_by_item: dict[int, int] = {}
+    global_risk_points = 0
 
     for row in balances:
         item_id = int(row["id"])
@@ -146,7 +149,7 @@ def generate_audit_report(as_of_date: date) -> dict[str, Any]:
                 )
                 risk_by_item[item_id] += 10
 
-        laundry_moves = get_laundry_movements(item_id, as_of_date)
+        laundry_moves = get_laundry_movements(item_id, as_of_date, operation_unit=operation_unit)
         pending_qty, pending_days = _pending_laundry_info(laundry_moves, as_of_date)
         if pending_qty > 0 and pending_days >= 3:
             severity = "alta" if pending_days >= 5 else "media"
@@ -166,7 +169,12 @@ def generate_audit_report(as_of_date: date) -> dict[str, Any]:
             )
             risk_by_item[item_id] += score
 
-        usage_series = get_daily_allocated_usage(item_id=item_id, days=30, ref_date=as_of_date)
+        usage_series = get_daily_allocated_usage(
+            item_id=item_id,
+            days=30,
+            ref_date=as_of_date,
+            operation_unit=operation_unit,
+        )
         usage_score, usage_desc = _usage_anomaly_score(usage_series)
         if usage_score > 0:
             findings.append(
@@ -199,14 +207,37 @@ def generate_audit_report(as_of_date: date) -> dict[str, Any]:
             )
             risk_by_item[item_id] += 20 if delta >= 5 else 12
 
+    billed_sent = laundry_summary_30d["billed_sent"]
+    rewash_sent = laundry_summary_30d["rewash_sent"]
+    if billed_sent >= 20 and rewash_sent > 0:
+        rewash_ratio = rewash_sent / billed_sent
+        if rewash_ratio >= 0.1:
+            score = 15 if rewash_ratio >= 0.2 else 9
+            findings.append(
+                {
+                    "item": "GERAL",
+                    "severidade": "alta" if rewash_ratio >= 0.2 else "media",
+                    "area": "qualidade_lavanderia",
+                    "descricao": (
+                        f"Taxa de relavagem elevada nos últimos 30 dias: "
+                        f"{rewash_sent}/{billed_sent} ({rewash_ratio:.1%})."
+                    ),
+                    "acao": "Negociar qualidade com a lavanderia e auditar lotes com recorrência de relavagem.",
+                    "risco_pontos": score,
+                }
+            )
+            global_risk_points += score
+
     findings.sort(key=lambda row: row["risco_pontos"], reverse=True)
-    overall_score = min(100, sum(risk_by_item.values()))
+    overall_score = min(100, sum(risk_by_item.values()) + global_risk_points)
     items_with_alert = len([x for x in risk_by_item.values() if x > 0])
 
     return {
         "as_of_date": as_of_date.isoformat(),
+        "operation_unit": operation_unit,
         "overall_risk_score": overall_score,
         "items_with_alert": items_with_alert,
+        "laundry_summary_30d": laundry_summary_30d,
         "findings": findings,
         "balances": balances,
     }
