@@ -30,11 +30,18 @@ def init_db():
             name TEXT NOT NULL UNIQUE,
             category TEXT DEFAULT '',
             par_level INTEGER DEFAULT 0,
+            purchase_price REAL DEFAULT 0.0,
             laundry_unit_cost REAL DEFAULT 0.0,
             active INTEGER DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )
     """)
+    # Migração: adicionar coluna purchase_price se não existir (banco legado)
+    try:
+        c.execute("ALTER TABLE items ADD COLUMN purchase_price REAL DEFAULT 0.0")
+        conn.commit()
+    except Exception:
+        pass
 
     # Entradas no estoque central (compras, doações, ajustes)
     c.execute("""
@@ -140,18 +147,18 @@ def get_item(item_id):
     return dict(row) if row else None
 
 
-def upsert_item(name, category, par_level, laundry_unit_cost, active=1, item_id=None):
+def upsert_item(name, category, par_level, purchase_price, laundry_unit_cost, active=1, item_id=None):
     conn = get_conn()
     if item_id:
         conn.execute("""
-            UPDATE items SET name=?, category=?, par_level=?, laundry_unit_cost=?, active=?
+            UPDATE items SET name=?, category=?, par_level=?, purchase_price=?, laundry_unit_cost=?, active=?
             WHERE id=?
-        """, (name, category, par_level, laundry_unit_cost, active, item_id))
+        """, (name, category, par_level, purchase_price, laundry_unit_cost, active, item_id))
     else:
         conn.execute("""
-            INSERT INTO items (name, category, par_level, laundry_unit_cost, active)
-            VALUES (?, ?, ?, ?, ?)
-        """, (name, category, par_level, laundry_unit_cost, active))
+            INSERT INTO items (name, category, par_level, purchase_price, laundry_unit_cost, active)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (name, category, par_level, purchase_price, laundry_unit_cost, active))
     conn.commit()
     conn.close()
 

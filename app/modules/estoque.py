@@ -14,10 +14,16 @@ def render():
         balances = get_all_central_balances()
         if balances:
             df = pd.DataFrame(balances)
-            df = df[["id", "name", "category", "par_level", "total_received",
-                      "total_transferred_out", "central_balance", "laundry_unit_cost"]]
-            df.columns = ["ID", "Item", "Categoria", "Nível Par", "Total Recebido",
-                          "Transferido", "Saldo Central", "Custo Lav. (R$)"]
+            base_cols = ["id", "name", "category", "par_level", "total_received",
+                         "total_transferred_out", "central_balance", "purchase_price", "laundry_unit_cost"]
+            df = df[[c for c in base_cols if c in df.columns]]
+            col_rename = {
+                "id": "ID", "name": "Item", "category": "Categoria",
+                "par_level": "Nível Par", "total_received": "Total Recebido",
+                "total_transferred_out": "Transferido", "central_balance": "Saldo Central",
+                "purchase_price": "Valor Compra (R$)", "laundry_unit_cost": "Custo Lav. (R$)"
+            }
+            df = df.rename(columns=col_rename)
 
             def highlight_low(row):
                 if row["Saldo Central"] == 0:
