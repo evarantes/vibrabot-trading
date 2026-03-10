@@ -31,6 +31,12 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - taxa de relavagem por qualidade de lavagem,
    - tendências de perda,
    - ações recomendadas de investigação.
+6. **Apuração de lavanderia estilo planilha**:
+   - colunas diárias (quinzena/mês),
+   - total de peças cobradas,
+   - valor total por item (valor unitário x total),
+   - relave enviado/retornado (sem cobrança),
+   - perdas no período.
 
 ---
 
@@ -101,6 +107,7 @@ pytest
 5. Registrar compras, uso e perdas em **Lançamentos Operacionais**.
 6. Fazer contagem física diária em **Contagem Física**.
 7. Acompanhar posições em **Painel de Controle** e investigar alertas em **Auditoria IA**.
+8. Validar cobrança na tela **Apuração Lavanderia (Planilha)** para quinzena/mensalidade.
 
 ---
 

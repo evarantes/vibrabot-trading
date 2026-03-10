@@ -27,20 +27,39 @@ def _normalize_unit(operation_unit: str) -> str:
     return unit
 
 
-def add_item(name: str, category: str, par_level: int = 0) -> None:
+def _to_date(raw_value: Any) -> date:
+    if isinstance(raw_value, date):
+        return raw_value
+    return date.fromisoformat(str(raw_value))
+
+
+def add_item(name: str, category: str, par_level: int = 0, laundry_unit_cost: float = 0.0) -> None:
     with get_connection() as conn:
         execute(
             conn,
             """
-            INSERT INTO items (name, category, par_level)
-            VALUES (?, ?, ?)
+            INSERT INTO items (name, category, par_level, laundry_unit_cost)
+            VALUES (?, ?, ?, ?)
             """,
-            (name.strip(), category.strip(), max(par_level, 0)),
+            (name.strip(), category.strip(), max(par_level, 0), max(float(laundry_unit_cost), 0.0)),
+        )
+
+
+def update_item_laundry_cost(item_id: int, laundry_unit_cost: float) -> None:
+    with get_connection() as conn:
+        execute(
+            conn,
+            """
+            UPDATE items
+            SET laundry_unit_cost = ?
+            WHERE id = ?
+            """,
+            (max(float(laundry_unit_cost), 0.0), item_id),
         )
 
 
 def list_items(active_only: bool = True) -> list[dict[str, Any]]:
-    query = "SELECT id, name, category, par_level, active FROM items"
+    query = "SELECT id, name, category, par_level, laundry_unit_cost, active FROM items"
     params: list[Any] = []
     if active_only:
         query += " WHERE active = TRUE"
@@ -233,6 +252,7 @@ def get_balances(as_of_date: date, operation_unit: str = "HOTEL") -> list[dict[s
                 i.name,
                 i.category,
                 i.par_level,
+                i.laundry_unit_cost,
                 COALESCE(m.stock_theoretical, 0) AS stock_theoretical,
                 COALESCE(m.laundry_theoretical, 0) AS laundry_theoretical,
                 COALESCE(m.in_use_theoretical, 0) AS in_use_theoretical,
@@ -424,4 +444,74 @@ def get_laundry_billing_summary(
         "rewash_sent": int(row["rewash_sent"] or 0),
         "rewash_returned": int(row["rewash_returned"] or 0),
     }
+
+
+def get_laundry_period_item_report(
+    start_date: date,
+    end_date: date,
+    operation_unit: str = "HOTEL",
+) -> list[dict[str, Any]]:
+    unit = _normalize_unit(operation_unit)
+    with get_connection() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT
+                i.id AS item_id,
+                i.name,
+                i.laundry_unit_cost,
+                m.movement_date,
+                SUM(CASE WHEN m.movement_type = 'LAUNDRY_SENT' THEN m.quantity ELSE 0 END) AS billed_qty,
+                SUM(CASE WHEN m.movement_type = 'LAUNDRY_REWASH_SENT' THEN m.quantity ELSE 0 END) AS rewash_sent_qty,
+                SUM(CASE WHEN m.movement_type = 'LAUNDRY_REWASH_RETURNED' THEN m.quantity ELSE 0 END) AS rewash_returned_qty,
+                SUM(CASE WHEN m.movement_type = 'LOSS' THEN m.quantity ELSE 0 END) AS loss_qty
+            FROM items i
+            LEFT JOIN movements m
+                ON m.item_id = i.id
+               AND m.operation_unit = ?
+               AND m.movement_date BETWEEN ? AND ?
+            WHERE i.active = TRUE
+            GROUP BY i.id, i.name, i.laundry_unit_cost, m.movement_date
+            ORDER BY i.name, m.movement_date
+            """,
+            (unit, start_date.isoformat(), end_date.isoformat()),
+        ).fetchall()
+
+    report_map: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        item_id = int(row["item_id"])
+        current = report_map.setdefault(
+            item_id,
+            {
+                "item_id": item_id,
+                "name": row["name"],
+                "laundry_unit_cost": float(row["laundry_unit_cost"] or 0.0),
+                "daily_billed_qty": {},
+                "total_billed_qty": 0,
+                "total_billed_value": 0.0,
+                "rewash_sent_qty": 0,
+                "rewash_returned_qty": 0,
+                "loss_qty": 0,
+            },
+        )
+
+        raw_dt = row["movement_date"]
+        billed_qty = int(row["billed_qty"] or 0)
+        rewash_sent_qty = int(row["rewash_sent_qty"] or 0)
+        rewash_returned_qty = int(row["rewash_returned_qty"] or 0)
+        loss_qty = int(row["loss_qty"] or 0)
+
+        if raw_dt is not None:
+            dt = _to_date(raw_dt)
+            current["daily_billed_qty"][dt] = current["daily_billed_qty"].get(dt, 0) + billed_qty
+
+        current["total_billed_qty"] += billed_qty
+        current["rewash_sent_qty"] += rewash_sent_qty
+        current["rewash_returned_qty"] += rewash_returned_qty
+        current["loss_qty"] += loss_qty
+
+    for item in report_map.values():
+        item["total_billed_value"] = round(item["total_billed_qty"] * item["laundry_unit_cost"], 2)
+
+    return list(report_map.values())
 

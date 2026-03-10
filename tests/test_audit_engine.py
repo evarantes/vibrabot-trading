@@ -8,6 +8,7 @@ from codexiaauditor.repository import (
     add_movement,
     get_balances,
     get_laundry_billing_summary,
+    get_laundry_period_item_report,
     list_items,
     upsert_inventory_count,
 )
@@ -109,3 +110,32 @@ def test_relavagem_controlada_sem_cobranca(tmp_path):
     summary = get_laundry_billing_summary(days=7, ref_date=today, operation_unit="CLUB")
     assert summary["billed_sent"] == 30
     assert summary["rewash_sent"] == 8
+
+
+def test_apuracao_planilha_por_periodo(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    base_date = date(2026, 3, 15)
+
+    add_item("Toalha de praia", "Banho", par_level=10, laundry_unit_cost=2.5)
+    item_id = list_items()[0]["id"]
+
+    add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 1), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_SENT", 12, date(2026, 3, 2), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_REWASH_SENT", 3, date(2026, 3, 2), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_REWASH_RETURNED", 2, date(2026, 3, 3), operation_unit="HOTEL")
+    add_movement(item_id, "LOSS", 1, date(2026, 3, 4), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_SENT", 7, date(2026, 3, 5), operation_unit="CLUB")
+
+    report = get_laundry_period_item_report(
+        start_date=date(2026, 3, 1),
+        end_date=base_date,
+        operation_unit="HOTEL",
+    )
+
+    assert len(report) == 1
+    row = report[0]
+    assert row["total_billed_qty"] == 22
+    assert row["total_billed_value"] == 55.0
+    assert row["rewash_sent_qty"] == 3
+    assert row["rewash_returned_qty"] == 2
+    assert row["loss_qty"] == 1

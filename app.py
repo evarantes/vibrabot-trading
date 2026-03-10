@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from calendar import monthrange
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -18,8 +19,10 @@ from codexiaauditor.repository import (
     get_balances,
     get_daily_movement_totals,
     get_laundry_billing_summary,
+    get_laundry_period_item_report,
     list_items,
     list_recent_movements,
+    update_item_laundry_cost,
     upsert_inventory_count,
 )
 
@@ -61,6 +64,26 @@ def _items_map() -> dict[str, int]:
     return {row["name"]: int(row["id"]) for row in list_items()}
 
 
+def _period_bounds(period_mode: str, reference_date: date, custom_start: date, custom_end: date) -> tuple[date, date]:
+    if period_mode == "Quinzenal":
+        if reference_date.day <= 15:
+            start = reference_date.replace(day=1)
+            end = reference_date.replace(day=15)
+        else:
+            start = reference_date.replace(day=16)
+            end = reference_date.replace(day=monthrange(reference_date.year, reference_date.month)[1])
+        return start, end
+
+    if period_mode == "Mensal":
+        start = reference_date.replace(day=1)
+        end = reference_date.replace(day=monthrange(reference_date.year, reference_date.month)[1])
+        return start, end
+
+    start = min(custom_start, custom_end)
+    end = max(custom_start, custom_end)
+    return start, end
+
+
 st.sidebar.title("Menu")
 selected_unit = st.sidebar.selectbox(
     "Unidade para auditoria",
@@ -74,6 +97,7 @@ menu = st.sidebar.radio(
         "Cadastro de Itens",
         "Lançamentos Lavanderia",
         "Lançamentos Operacionais",
+        "Apuração Lavanderia (Planilha)",
         "Contagem Física",
         "Painel de Controle",
         "Auditoria IA",
@@ -90,17 +114,23 @@ st.caption(
 if menu == "Cadastro de Itens":
     st.subheader("Cadastrar item de enxoval")
     with st.form("form-item", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         name = col1.text_input("Nome do item", placeholder="Ex: Lençol solteiro 180 fios")
         category = col2.text_input("Categoria", value="Roupa de cama")
         par_level = col3.number_input("Nível mínimo (par level)", min_value=0, step=1, value=0)
+        laundry_cost = col4.number_input("Valor unit. lavagem (R$)", min_value=0.0, step=0.1, value=0.0)
         submitted = st.form_submit_button("Salvar item")
         if submitted:
             if not name.strip():
                 st.error("Informe o nome do item.")
             else:
                 try:
-                    add_item(name=name, category=category, par_level=int(par_level))
+                    add_item(
+                        name=name,
+                        category=category,
+                        par_level=int(par_level),
+                        laundry_unit_cost=float(laundry_cost),
+                    )
                     st.success("Item cadastrado com sucesso.")
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Não foi possível cadastrar: {exc}")
@@ -109,6 +139,21 @@ if menu == "Cadastro de Itens":
     if items_df.empty:
         st.warning("Nenhum item cadastrado ainda.")
     else:
+        with st.form("form-update-laundry-cost"):
+            c1, c2, c3 = st.columns(3)
+            item_name = c1.selectbox("Atualizar valor de lavagem do item", options=items_df["name"].tolist())
+            new_cost = c2.number_input("Novo valor unit. (R$)", min_value=0.0, step=0.1, value=0.0)
+            update_submitted = c3.form_submit_button("Atualizar valor")
+            if update_submitted:
+                try:
+                    item_id = int(items_df[items_df["name"] == item_name]["id"].iloc[0])
+                    update_item_laundry_cost(item_id=item_id, laundry_unit_cost=float(new_cost))
+                    st.success("Valor unitário de lavagem atualizado.")
+                    items_df = pd.DataFrame(list_items())
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Não foi possível atualizar valor: {exc}")
+
+        items_df["laundry_unit_cost"] = pd.to_numeric(items_df["laundry_unit_cost"], errors="coerce").fillna(0.0)
         st.dataframe(items_df, use_container_width=True, hide_index=True)
 
 elif menu == "Lançamentos Lavanderia":
@@ -224,6 +269,74 @@ elif menu == "Lançamentos Operacionais":
             ),
             use_container_width=True,
             hide_index=True,
+        )
+
+elif menu == "Apuração Lavanderia (Planilha)":
+    st.subheader(f"Apuração de cobrança da lavanderia - {UNIT_OPTIONS[selected_unit]}")
+    st.caption(
+        "Modelo de planilha com colunas diárias para validar cobrança quinzenal ou mensal, "
+        "incluindo relave (sem cobrança) e perdas."
+    )
+
+    p1, p2, p3 = st.columns(3)
+    period_mode = p1.selectbox("Modo de período", options=["Quinzenal", "Mensal", "Personalizado"])
+    reference_date = p2.date_input("Data de referência", value=as_of_date)
+    custom_start = p3.date_input("Início (personalizado)", value=as_of_date - timedelta(days=14))
+    custom_end = st.date_input("Fim (personalizado)", value=as_of_date)
+
+    start_date, end_date = _period_bounds(period_mode, reference_date, custom_start, custom_end)
+    st.info(f"Período apurado: **{start_date.strftime('%d/%m/%Y')}** até **{end_date.strftime('%d/%m/%Y')}**")
+
+    report_rows = get_laundry_period_item_report(
+        start_date=start_date,
+        end_date=end_date,
+        operation_unit=selected_unit,
+    )
+
+    days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+    table_rows: list[dict[str, object]] = []
+
+    for row in report_rows:
+        line: dict[str, object] = {
+            "ITENS": row["name"],
+            "VALOR UNIT": float(row["laundry_unit_cost"]),
+        }
+        daily_map = row["daily_billed_qty"]
+        for dt in days:
+            line[f"{dt.day}º"] = int(daily_map.get(dt, 0))
+
+        line["TOTAL"] = int(row["total_billed_qty"])
+        line["VALOR TOTAL"] = float(row["total_billed_value"])
+        line["RELAVE ENVIADO"] = int(row["rewash_sent_qty"])
+        line["RELAVE RETORNADO"] = int(row["rewash_returned_qty"])
+        line["PERDAS"] = int(row["loss_qty"])
+        table_rows.append(line)
+
+    if not table_rows:
+        st.warning("Sem itens para apuração no período selecionado.")
+    else:
+        sheet_df = pd.DataFrame(table_rows)
+        total_billed_qty = int(sheet_df["TOTAL"].sum())
+        total_billed_value = float(sheet_df["VALOR TOTAL"].sum())
+        total_rewash_sent = int(sheet_df["RELAVE ENVIADO"].sum())
+        total_rewash_returned = int(sheet_df["RELAVE RETORNADO"].sum())
+        total_losses = int(sheet_df["PERDAS"].sum())
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Peças cobradas no período", total_billed_qty)
+        m2.metric("Valor total cobrado (R$)", f"{total_billed_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        m3.metric("Relave enviado (sem cobrança)", total_rewash_sent)
+        m4.metric("Relave pendente", total_rewash_sent - total_rewash_returned)
+        st.metric("Perdas no período", total_losses)
+
+        st.dataframe(sheet_df, use_container_width=True, hide_index=True)
+
+        csv_data = sheet_df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "Baixar apuração em CSV",
+            data=csv_data,
+            file_name=f"apuracao_lavanderia_{selected_unit.lower()}_{start_date}_{end_date}.csv",
+            mime="text/csv",
         )
 
 elif menu == "Contagem Física":

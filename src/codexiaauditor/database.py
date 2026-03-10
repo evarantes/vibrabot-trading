@@ -82,9 +82,17 @@ def _init_postgres() -> None:
                 name TEXT NOT NULL UNIQUE,
                 category TEXT NOT NULL,
                 par_level INTEGER NOT NULL DEFAULT 0,
+                laundry_unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            """,
+        )
+        execute(
+            conn,
+            """
+            ALTER TABLE items
+            ADD COLUMN IF NOT EXISTS laundry_unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0;
             """,
         )
         execute(
@@ -166,6 +174,7 @@ def _init_sqlite() -> None:
                 name TEXT NOT NULL UNIQUE,
                 category TEXT NOT NULL,
                 par_level INTEGER NOT NULL DEFAULT 0,
+                laundry_unit_cost REAL NOT NULL DEFAULT 0,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -198,6 +207,7 @@ def _init_sqlite() -> None:
             );
             """
         )
+        _ensure_sqlite_column(conn, "items", "laundry_unit_cost", "REAL NOT NULL DEFAULT 0")
         _ensure_sqlite_column(conn, "movements", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
         _ensure_sqlite_column(conn, "inventory_counts", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
         conn.execute("UPDATE movements SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit = ''")
