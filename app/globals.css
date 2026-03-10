@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --codexia-primary: #0f766e;
+  --codexia-secondary: #134e4a;
+  --codexia-accent: #2dd4bf;
+  --codexia-dark: #042f2e;
+  --codexia-light: #ccfbf1;
+}
+
+body {
+  color: var(--codexia-light);
+  background: linear-gradient(135deg, #042f2e 0%, #134e4a 50%, #0f766e 100%);
+  background-attachment: fixed;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

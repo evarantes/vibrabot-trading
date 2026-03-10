@@ -1,0 +1,72 @@
+// CODEXIAAUDITOR - Schema de Auditoria de Enxoval para Hotéis
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./codexiaauditor.db"
+}
+
+// Tipos de itens de enxoval (lençóis, toalhas, fronhas, etc.)
+model TipoEnxoval {
+  id          String   @id
+  nome        String   // Ex: Lençol Solteiro, Toalha de Banho, Fronha
+  descricao   String?
+  unidade     String   @default("unidade") // unidade, par, jogo
+  parLevel    Int      @default(0) // Quantidade mínima para operação
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  compras    CompraEnxoval[]
+  movimentacoes MovimentacaoEnxoval[]
+}
+
+// Compras de enxoval - histórico do que foi adquirido
+model CompraEnxoval {
+  id          String   @id @default(cuid())
+  tipoId      String
+  tipo        TipoEnxoval @relation(fields: [tipoId], references: [id])
+  quantidade  Int
+  dataCompra  DateTime
+  fornecedor  String?
+  valorTotal  Float?
+  observacao  String?
+  createdAt   DateTime @default(now())
+
+  @@index([tipoId])
+  @@index([dataCompra])
+}
+
+// Movimentações diárias - fluxo entre estoque, lavanderia e uso
+model MovimentacaoEnxoval {
+  id          String   @id @default(cuid())
+  tipoId      String
+  tipo        TipoEnxoval @relation(fields: [tipoId], references: [id])
+  data        DateTime
+  tipoMov     String   // ENTRADA_ESTOQUE, SAIDA_LAVANDERIA, RETORNO_LAVANDERIA, SAIDA_USO, RETORNO_USO
+  quantidade  Int
+  origem      String?  // Ex: Quarto 101, Lavanderia externa
+  destino     String?
+  observacao  String?
+  createdAt   DateTime @default(now())
+
+  @@index([tipoId])
+  @@index([data])
+  @@index([tipoMov])
+}
+
+// Snapshot diário para auditoria - estado consolidado
+model SnapshotAuditoria {
+  id          String   @id @default(cuid())
+  data        DateTime @unique
+  totalCompras Int     @default(0)
+  totalEstoque Int     @default(0)
+  totalLavanderia Int  @default(0)
+  totalEmUso  Int      @default(0)
+  totalEsperado Int    @default(0)
+  desfalque   Int      @default(0)
+  detalhes    String?  // JSON com breakdown por tipo
+  analiseIA   String?  // Análise gerada pela IA
+  createdAt   DateTime @default(now())
+}
