@@ -194,11 +194,21 @@ elif menu == "Transferir Central -> Unidade":
     if central_items.empty:
         st.warning("Cadastre itens no estoque CENTRAL antes de transferir.")
     else:
+        saldo_base_date = st.date_input(
+            "Data-base do saldo central",
+            value=date.today(),
+            help="Os saldos exibidos para transferência usam esta data-base.",
+            key="transfer_saldo_base_date",
+        )
         transfer_options = []
         transfer_map: dict[str, int] = {}
         for _, row in central_items.iterrows():
-            stock = get_item_theoretical_stock(int(row["id"]), as_of_date)
-            label = f"{row['name']} (saldo central: {stock})"
+            stock = get_item_theoretical_stock(
+                int(row["id"]),
+                saldo_base_date,
+                operation_unit="CENTRAL",
+            )
+            label = f"{row['name']} (saldo central em {saldo_base_date.strftime('%d/%m/%Y')}: {stock})"
             transfer_options.append(label)
             transfer_map[label] = int(row["id"])
 
@@ -207,7 +217,7 @@ elif menu == "Transferir Central -> Unidade":
             selected_label = t1.selectbox("Item do CENTRAL", options=transfer_options)
             target_unit = t2.selectbox("Destino", options=["HOTEL", "CLUB"])
             qty = t3.number_input("Quantidade a transferir", min_value=1, step=1, value=1)
-            transfer_date = t4.date_input("Data da transferência", value=date.today())
+            transfer_date = t4.date_input("Data da transferência", value=saldo_base_date)
             x1, x2, x3 = st.columns(3)
             unit_laundry_cost = x1.number_input(
                 "Valor da lavagem no destino (R$)",

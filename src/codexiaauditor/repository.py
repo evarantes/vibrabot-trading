@@ -127,8 +127,20 @@ def list_items(operation_unit: str = "HOTEL", active_only: bool = True) -> list[
     return [dict(row) for row in rows]
 
 
-def get_item_theoretical_stock(item_id: int, as_of_date: date) -> int:
+def get_item_theoretical_stock(
+    item_id: int,
+    as_of_date: date,
+    operation_unit: str | None = None,
+) -> int:
     with get_connection() as conn:
+        if operation_unit is None:
+            item = execute(conn, "SELECT operation_unit FROM items WHERE id = ?", (item_id,)).fetchone()
+            if item is None:
+                return 0
+            unit = _normalize_unit(str(item["operation_unit"]))
+        else:
+            unit = _normalize_unit(operation_unit)
+
         row = execute(
             conn,
             """
@@ -153,9 +165,10 @@ def get_item_theoretical_stock(item_id: int, as_of_date: date) -> int:
                 ) AS stock_theoretical
             FROM movements
             WHERE item_id = ?
+              AND operation_unit = ?
               AND movement_date <= ?
             """,
-            (item_id, as_of_date.isoformat()),
+            (item_id, unit, as_of_date.isoformat()),
         ).fetchone()
     if row is None:
         return 0
@@ -183,7 +196,7 @@ def transfer_central_to_unit(
     if _normalize_unit(central_item["operation_unit"]) != "CENTRAL":
         raise ValueError("Selecione um item do estoque CENTRAL.")
 
-    stock_available = get_item_theoretical_stock(central_item_id, movement_date)
+    stock_available = get_item_theoretical_stock(central_item_id, movement_date, operation_unit="CENTRAL")
     if stock_available < quantity:
         raise ValueError(
             f"Estoque central insuficiente. Disponível={stock_available}, solicitado={quantity}."

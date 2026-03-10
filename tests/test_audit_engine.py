@@ -179,3 +179,27 @@ def test_fluxo_estoque_central_para_unidades(tmp_path):
     assert int(get_item_theoretical_stock(int(hotel_item["id"]), today)) == 50
     assert float(club_item["laundry_unit_cost"]) == 2.5
     assert float(hotel_item["laundry_unit_cost"]) == 2.2
+
+
+def test_saldo_item_filtra_por_unidade(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    today = date.today()
+
+    add_item("Guardanapo premium", "Mesa", operation_unit="CENTRAL")
+    central_item_id = list_items(operation_unit="CENTRAL")[0]["id"]
+    add_movement(central_item_id, "PURCHASE", 100, today, operation_unit="CENTRAL")
+
+    from codexiaauditor.database import execute, get_connection
+
+    # Simula dado legado inconsistente (mesmo item_id em outra unidade).
+    with get_connection() as conn:
+        execute(
+            conn,
+            """
+            INSERT INTO movements (item_id, operation_unit, movement_type, quantity, movement_date, source_ref, note)
+            VALUES (?, 'HOTEL', 'STOCK_OUT', 80, ?, '', 'dado legado')
+            """,
+            (central_item_id, today.isoformat()),
+        )
+
+    assert get_item_theoretical_stock(central_item_id, today, operation_unit="CENTRAL") == 100
