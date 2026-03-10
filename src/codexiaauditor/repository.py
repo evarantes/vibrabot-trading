@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from .database import get_connection
+from .database import execute, get_connection
 
 MOVEMENT_TYPES = {
     "PURCHASE",
@@ -19,7 +19,8 @@ MOVEMENT_TYPES = {
 
 def add_item(name: str, category: str, par_level: int = 0) -> None:
     with get_connection() as conn:
-        conn.execute(
+        execute(
+            conn,
             """
             INSERT INTO items (name, category, par_level)
             VALUES (?, ?, ?)
@@ -32,11 +33,11 @@ def list_items(active_only: bool = True) -> list[dict[str, Any]]:
     query = "SELECT id, name, category, par_level, active FROM items"
     params: list[Any] = []
     if active_only:
-        query += " WHERE active = 1"
+        query += " WHERE active = TRUE"
     query += " ORDER BY name"
 
     with get_connection() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = execute(conn, query, params).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -54,7 +55,8 @@ def add_movement(
         raise ValueError("Quantidade deve ser maior que zero.")
 
     with get_connection() as conn:
-        conn.execute(
+        execute(
+            conn,
             """
             INSERT INTO movements (
                 item_id,
@@ -79,7 +81,8 @@ def upsert_inventory_count(
     note: str = "",
 ) -> None:
     with get_connection() as conn:
-        conn.execute(
+        execute(
+            conn,
             """
             INSERT INTO inventory_counts (
                 item_id, count_date, counted_stock, counted_laundry, counted_in_use, note
@@ -104,7 +107,8 @@ def upsert_inventory_count(
 
 def get_balances(as_of_date: date) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = execute(
+            conn,
             """
             WITH move AS (
                 SELECT
@@ -183,7 +187,7 @@ def get_balances(as_of_date: date) -> list[dict[str, Any]]:
             FROM items i
             LEFT JOIN move m ON m.item_id = i.id
             LEFT JOIN latest_count lc ON lc.item_id = i.id
-            WHERE i.active = 1
+            WHERE i.active = TRUE
             ORDER BY i.name
             """,
             (as_of_date.isoformat(), as_of_date.isoformat()),
@@ -193,7 +197,8 @@ def get_balances(as_of_date: date) -> list[dict[str, Any]]:
 
 def list_recent_movements(limit: int = 200) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = execute(
+            conn,
             """
             SELECT m.id, m.movement_date, m.movement_type, m.quantity, m.source_ref, m.note, i.name AS item_name
             FROM movements m
@@ -211,7 +216,8 @@ def get_daily_allocated_usage(item_id: int, days: int = 30, ref_date: date | Non
     start_date = end_date - timedelta(days=days - 1)
 
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = execute(
+            conn,
             """
             SELECT
                 movement_date,
@@ -235,7 +241,8 @@ def get_daily_allocated_usage(item_id: int, days: int = 30, ref_date: date | Non
 
 def get_laundry_movements(item_id: int, as_of_date: date) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = execute(
+            conn,
             """
             SELECT movement_date, movement_type, quantity
             FROM movements
@@ -253,7 +260,8 @@ def get_loss_totals(days: int, ref_date: date | None = None) -> dict[int, int]:
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = execute(
+            conn,
             """
             SELECT item_id, SUM(quantity) AS total_loss
             FROM movements
@@ -270,7 +278,8 @@ def get_daily_movement_totals(days: int = 30, ref_date: date | None = None) -> l
     end_date = ref_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = execute(
+            conn,
             """
             SELECT
                 movement_date,

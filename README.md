@@ -35,7 +35,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 ## Arquitetura
 
 - **Frontend/App:** Streamlit (`app.py`)
-- **Persistência:** SQLite (`codexiaauditor.db`)
+- **Persistência principal:** PostgreSQL
 - **Núcleo de auditoria:** `src/codexiaauditor/audit_engine.py`
 - **Camada de dados:** `src/codexiaauditor/repository.py`
 
@@ -53,10 +53,24 @@ source .venv/bin/activate
 ### 2) Instalar dependências
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
-### 3) Subir o sistema
+### 3) Subir PostgreSQL
+
+```bash
+docker compose up -d postgres
+```
+
+### 4) Configurar variáveis de ambiente
+
+```bash
+cp .env.example .env
+export CODEXIAAUDITOR_DB_ENGINE=postgres
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/codexiaauditor
+```
+
+### 5) Subir o sistema
 
 ```bash
 streamlit run app.py
@@ -67,8 +81,11 @@ streamlit run app.py
 ## Testes
 
 ```bash
+export CODEXIAAUDITOR_DB_ENGINE=sqlite
 pytest
 ```
+
+> Observação: em produção/uso real, o sistema está configurado para PostgreSQL.
 
 ---
 

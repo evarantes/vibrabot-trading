@@ -16,7 +16,8 @@ def _pending_laundry_info(movements: list[dict[str, Any]], as_of_date: date) -> 
     pending_batches: list[dict[str, Any]] = []
 
     for move in movements:
-        move_date = date.fromisoformat(move["movement_date"])
+        raw_date = move["movement_date"]
+        move_date = raw_date if isinstance(raw_date, date) else date.fromisoformat(raw_date)
         qty = int(move["quantity"])
         move_type = move["movement_type"]
 

@@ -1,3 +1,4 @@
+import os
 from datetime import date, timedelta
 
 from codexiaauditor import database
@@ -6,6 +7,8 @@ from codexiaauditor.repository import add_item, add_movement, list_items, upsert
 
 
 def _prepare_tmp_db(tmp_path):
+    os.environ["CODEXIAAUDITOR_DB_ENGINE"] = "sqlite"
+    os.environ["CODEXIAAUDITOR_SQLITE_PATH"] = str(tmp_path / "test_codexiaauditor.db")
     database.DB_PATH = tmp_path / "test_codexiaauditor.db"
     database.init_db()
 

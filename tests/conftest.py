@@ -1,5 +1,8 @@
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("CODEXIAAUDITOR_DB_ENGINE", "sqlite")
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
