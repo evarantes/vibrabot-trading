@@ -96,3 +96,65 @@ pytest
 3. Registrar alocações e retornos de uso.
 4. Fazer contagem física no fechamento.
 5. Abrir aba **Auditoria IA** para investigar alertas e agir no mesmo dia.
+
+---
+
+## Deploy no Coolify (passo a passo)
+
+### Pré-requisitos
+
+- Repositório no GitHub com estes arquivos atualizados.
+- Instância do Coolify funcionando.
+- Domínio/subdomínio para o app (ex: `auditoria.seuhotel.com`).
+
+### 1) Criar o banco PostgreSQL no Coolify
+
+1. No Coolify, clique em **New Resource**.
+2. Escolha **Database** > **PostgreSQL**.
+3. Defina nome (ex: `codexiaauditor-db`) e crie o recurso.
+4. Abra o recurso do banco e copie os dados de conexão:
+   - host,
+   - porta,
+   - database,
+   - user,
+   - password.
+
+### 2) Criar a aplicação no Coolify
+
+1. No Coolify, clique em **New Resource**.
+2. Escolha **Application** > **Public Repository** (ou conecte seu GitHub).
+3. Selecione este repositório e a branch desejada.
+4. Em **Build Pack**, escolha **Dockerfile**.
+5. Defina a **Port** da aplicação como `8501`.
+6. Clique em **Save**.
+
+### 3) Configurar variáveis de ambiente da aplicação
+
+Em **Environment Variables**, adicione:
+
+- `CODEXIAAUDITOR_DB_ENGINE=postgres`
+- `DATABASE_URL=postgresql://USUARIO:SENHA@HOST:PORTA/NOME_DO_BANCO`
+
+> Use exatamente os dados do PostgreSQL criado no Coolify.
+
+### 4) Configurar domínio e HTTPS
+
+1. Em **Domains**, adicione seu domínio/subdomínio.
+2. Ative **Generate SSL** (Let's Encrypt).
+3. Salve.
+
+### 5) Deploy
+
+1. Clique em **Deploy**.
+2. Aguarde o build e o start do container.
+3. Abra o domínio configurado.
+4. Na primeira carga, o sistema já cria automaticamente as tabelas no PostgreSQL.
+
+### 6) Checklist de produção para hoje
+
+- [ ] App abre no domínio.
+- [ ] Consigo cadastrar item.
+- [ ] Consigo registrar movimento.
+- [ ] Consigo registrar contagem física.
+- [ ] Aba **Auditoria IA** mostra score e alertas.
+- [ ] Dados persistem após reinício do container.
