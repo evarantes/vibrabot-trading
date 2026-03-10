@@ -7,6 +7,7 @@ from codexiaauditor.repository import (
     add_category,
     add_item,
     add_movement,
+    get_central_stock_report,
     get_balances,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
@@ -220,3 +221,37 @@ def test_categoria_e_ativacao_de_item(tmp_path):
 
     active_items = list_items(operation_unit="CENTRAL", active_only=True)
     assert all(int(x["id"]) != int(item["id"]) for x in active_items)
+
+
+def test_relatorio_estoque_central_com_dados_compra(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    ref = date(2026, 3, 10)
+
+    add_item("Toalha de mesa", "Mesa", operation_unit="CENTRAL")
+    item_id = list_items(operation_unit="CENTRAL")[0]["id"]
+    add_movement(
+        item_id=item_id,
+        movement_type="PURCHASE",
+        quantity=200,
+        movement_date=ref,
+        operation_unit="CENTRAL",
+        source_ref="NF-999",
+        movement_unit_cost=5.5,
+        movement_total_value=1100.0,
+        note="Compra fornecedor A",
+    )
+    add_movement(
+        item_id=item_id,
+        movement_type="STOCK_OUT",
+        quantity=50,
+        movement_date=ref,
+        operation_unit="CENTRAL",
+        note="Transferência para unidades",
+    )
+
+    report = get_central_stock_report(ref)
+    row = report[0]
+    assert int(row["stock_qty"]) == 150
+    assert str(row["last_invoice"]) == "NF-999"
+    assert float(row["last_unit_cost"]) == 5.5
+    assert float(row["last_total_value"]) == 1100.0

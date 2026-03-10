@@ -352,6 +352,8 @@ def add_movement(
     movement_date: date,
     operation_unit: str = "HOTEL",
     source_ref: str = "",
+    movement_unit_cost: float | None = None,
+    movement_total_value: float | None = None,
     note: str = "",
 ) -> None:
     if movement_type not in MOVEMENT_TYPES:
@@ -379,9 +381,11 @@ def add_movement(
                 quantity,
                 movement_date,
                 source_ref,
+                movement_unit_cost,
+                movement_total_value,
                 note
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
@@ -390,6 +394,8 @@ def add_movement(
                 quantity,
                 movement_date.isoformat(),
                 source_ref.strip(),
+                movement_unit_cost if movement_unit_cost is None else max(float(movement_unit_cost), 0.0),
+                movement_total_value if movement_total_value is None else max(float(movement_total_value), 0.0),
                 note.strip(),
             ),
         )
@@ -570,6 +576,8 @@ def list_recent_movements(limit: int = 200, operation_unit: str = "HOTEL") -> li
                 m.movement_type,
                 m.quantity,
                 m.source_ref,
+                m.movement_unit_cost,
+                m.movement_total_value,
                 m.note,
                 i.name AS item_name
             FROM movements m
@@ -579,6 +587,97 @@ def list_recent_movements(limit: int = 200, operation_unit: str = "HOTEL") -> li
             LIMIT ?
             """,
             (unit, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_central_stock_report(as_of_date: date) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = execute(
+            conn,
+            """
+            WITH stock_pos AS (
+                SELECT
+                    item_id,
+                    SUM(
+                        CASE movement_type
+                            WHEN 'PURCHASE' THEN quantity
+                            WHEN 'STOCK_IN' THEN quantity
+                            WHEN 'STOCK_OUT' THEN -quantity
+                            WHEN 'LAUNDRY_SENT' THEN -quantity
+                            WHEN 'LAUNDRY_REWASH_SENT' THEN -quantity
+                            WHEN 'LAUNDRY_RETURNED' THEN quantity
+                            WHEN 'LAUNDRY_REWASH_RETURNED' THEN quantity
+                            WHEN 'IN_USE_ALLOCATED' THEN -quantity
+                            WHEN 'IN_USE_RETURNED' THEN quantity
+                            WHEN 'LOSS' THEN -quantity
+                            ELSE 0
+                        END
+                    ) AS stock_qty
+                FROM movements
+                WHERE operation_unit = 'CENTRAL'
+                  AND movement_date <= ?
+                GROUP BY item_id
+            ),
+            last_purchase AS (
+                SELECT
+                    item_id,
+                    movement_date AS last_purchase_date,
+                    source_ref AS last_invoice,
+                    movement_unit_cost AS last_unit_cost,
+                    movement_total_value AS last_total_value,
+                    note AS last_note
+                FROM (
+                    SELECT
+                        m.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY item_id
+                            ORDER BY movement_date DESC, id DESC
+                        ) AS rn
+                    FROM movements m
+                    WHERE m.operation_unit = 'CENTRAL'
+                      AND m.movement_type = 'PURCHASE'
+                      AND m.movement_date <= ?
+                ) x
+                WHERE rn = 1
+            ),
+            last_move AS (
+                SELECT
+                    item_id,
+                    movement_type AS last_movement_type
+                FROM (
+                    SELECT
+                        m.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY item_id
+                            ORDER BY movement_date DESC, id DESC
+                        ) AS rn
+                    FROM movements m
+                    WHERE m.operation_unit = 'CENTRAL'
+                      AND m.movement_date <= ?
+                ) z
+                WHERE rn = 1
+            )
+            SELECT
+                i.id AS item_id,
+                i.name,
+                i.category,
+                i.par_level,
+                COALESCE(lm.last_movement_type, 'SEM_MOVIMENTO') AS last_movement_type,
+                COALESCE(sp.stock_qty, 0) AS stock_qty,
+                lp.last_purchase_date,
+                lp.last_invoice,
+                COALESCE(lp.last_unit_cost, 0) AS last_unit_cost,
+                COALESCE(lp.last_total_value, 0) AS last_total_value,
+                lp.last_note
+            FROM items i
+            LEFT JOIN stock_pos sp ON sp.item_id = i.id
+            LEFT JOIN last_purchase lp ON lp.item_id = i.id
+            LEFT JOIN last_move lm ON lm.item_id = i.id
+            WHERE i.operation_unit = 'CENTRAL'
+            ORDER BY i.name
+            """,
+            (as_of_date.isoformat(), as_of_date.isoformat(), as_of_date.isoformat()),
         ).fetchall()
     return [dict(row) for row in rows]
 

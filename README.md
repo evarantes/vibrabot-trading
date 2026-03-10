@@ -17,7 +17,16 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - no módulo **Cadastro de Itens (Central)**,
    - categoria escolhida por lista (com botão para criar categoria),
    - edição completa (nome, categoria, nível mínimo, ativo/inativo).
-2. **Lançamentos diários** de movimentação:
+2. **Lançamento de estoque central logo abaixo do cadastro**
+   - data da compra/movimento,
+   - item,
+   - tipo de movimentação,
+   - quantidade,
+   - número da NF,
+   - valor unitário de compra,
+   - valor total,
+   - observação.
+3. **Lançamentos diários** de movimentação:
    - compra,
    - envio para lavanderia,
    - retorno da lavanderia,
@@ -25,23 +34,23 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - alocação para uso,
    - retorno de uso,
    - perdas/baixas.
-3. **Contagem física diária** (estoque, lavanderia e em uso).
-4. **Dashboard operacional** com posição teórica consolidada.
+4. **Contagem física diária** (estoque, lavanderia e em uso).
+5. **Dashboard operacional** com posição teórica consolidada.
    - alerta crítico automático quando estoque atinge nível mínimo.
-5. **Auditoria IA** com:
+6. **Auditoria IA** com:
    - score de risco geral,
    - divergências físico x teórico,
    - peças retidas na lavanderia por tempo anormal,
    - taxa de relavagem por qualidade de lavagem,
    - tendências de perda,
    - ações recomendadas de investigação.
-6. **Apuração de lavanderia estilo planilha**:
+7. **Apuração de lavanderia estilo planilha**:
    - colunas diárias (quinzena/mês),
    - total de peças cobradas,
    - valor total por item (valor unitário x total),
    - relave enviado/retornado (sem cobrança),
    - perdas no período.
-7. **Fluxo com estoque central + unidades independentes**:
+8. **Fluxo com estoque central + unidades independentes**:
    - cadastro mestre de itens no **CENTRAL**,
    - transferência do CENTRAL para **HOTEL** e **CLUB**,
    - preços de lavagem independentes por unidade,

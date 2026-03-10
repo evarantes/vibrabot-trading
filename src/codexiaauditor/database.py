@@ -151,6 +151,8 @@ def _init_postgres() -> None:
                 quantity INTEGER NOT NULL CHECK(quantity > 0),
                 movement_date DATE NOT NULL,
                 source_ref TEXT,
+                movement_unit_cost NUMERIC(12,2),
+                movement_total_value NUMERIC(12,2),
                 note TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -181,6 +183,20 @@ def _init_postgres() -> None:
             """,
         )
         execute(conn, "ALTER TABLE movements ALTER COLUMN operation_unit SET DEFAULT 'HOTEL';")
+        execute(
+            conn,
+            """
+            ALTER TABLE movements
+            ADD COLUMN IF NOT EXISTS movement_unit_cost NUMERIC(12,2);
+            """,
+        )
+        execute(
+            conn,
+            """
+            ALTER TABLE movements
+            ADD COLUMN IF NOT EXISTS movement_total_value NUMERIC(12,2);
+            """,
+        )
         execute(
             conn,
             """
@@ -242,6 +258,8 @@ def _init_sqlite() -> None:
                 quantity INTEGER NOT NULL CHECK(quantity > 0),
                 movement_date TEXT NOT NULL,
                 source_ref TEXT,
+                movement_unit_cost REAL,
+                movement_total_value REAL,
                 note TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (item_id) REFERENCES items(id)
@@ -265,6 +283,8 @@ def _init_sqlite() -> None:
         _ensure_sqlite_column(conn, "items", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
         _ensure_sqlite_column(conn, "items", "laundry_unit_cost", "REAL NOT NULL DEFAULT 0")
         _ensure_sqlite_column(conn, "movements", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
+        _ensure_sqlite_column(conn, "movements", "movement_unit_cost", "REAL")
+        _ensure_sqlite_column(conn, "movements", "movement_total_value", "REAL")
         _ensure_sqlite_column(conn, "inventory_counts", "operation_unit", "TEXT NOT NULL DEFAULT 'HOTEL'")
         conn.execute(
             "UPDATE items SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit IN ('', 'LA_PLAGE')"

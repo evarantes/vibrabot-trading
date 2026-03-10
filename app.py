@@ -17,6 +17,7 @@ from codexiaauditor.repository import (
     add_category,
     add_item,
     add_movement,
+    get_central_stock_report,
     get_balances,
     get_daily_movement_totals,
     get_item_theoretical_stock,
@@ -246,6 +247,100 @@ if menu == "Cadastro de Itens (Central)":
             use_container_width=True,
             hide_index=True,
         )
+
+        st.markdown("---")
+        st.subheader("Estoque Central (compras e movimentações)")
+
+        active_central_items = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=True))
+        if active_central_items.empty:
+            st.warning("Ative ao menos um item no cadastro central para lançar compras/movimentações.")
+        else:
+            central_item_map = {row["name"]: int(row["id"]) for _, row in active_central_items.iterrows()}
+            central_form_labels = list(CENTRAL_STOCK_LABELS.keys())
+
+            with st.form("form-central-stock", clear_on_submit=True):
+                f1, f2, f3 = st.columns(3)
+                movement_date = f1.date_input("Data da compra/movimento", value=date.today(), key="central_movement_date")
+                item_name = f2.selectbox("Selecionar item", options=sorted(central_item_map.keys()))
+                movement_label = f3.selectbox("Tipo de movimento", options=central_form_labels)
+
+                f4, f5, f6 = st.columns(3)
+                quantity = f4.number_input("Quantidade", min_value=1, step=1, value=1, key="central_qty")
+                invoice_number = f5.text_input("Número da NF", placeholder="Ex: 12345")
+                unit_purchase_value = f6.number_input(
+                    "Valor de compra unitário (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    value=0.0,
+                )
+
+                calc_total = float(quantity) * float(unit_purchase_value)
+                g1, g2 = st.columns(2)
+                total_purchase_value = g1.number_input(
+                    "Valor total (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    value=float(calc_total),
+                )
+                note = g2.text_input("Observação")
+
+                save_central_move = st.form_submit_button("Salvar movimentação de estoque central")
+                if save_central_move:
+                    try:
+                        movement_type = CENTRAL_STOCK_LABELS[movement_label]
+                        if movement_type == "PURCHASE" and not invoice_number.strip():
+                            st.error("Informe o número da NF para lançamento de compra.")
+                        else:
+                            add_movement(
+                                item_id=central_item_map[item_name],
+                                movement_type=movement_type,
+                                quantity=int(quantity),
+                                movement_date=movement_date,
+                                operation_unit="CENTRAL",
+                                source_ref=invoice_number,
+                                movement_unit_cost=float(unit_purchase_value),
+                                movement_total_value=float(total_purchase_value),
+                                note=note,
+                            )
+                            st.success("Movimentação central registrada.")
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Falha ao salvar movimentação: {exc}")
+
+        stock_report = pd.DataFrame(get_central_stock_report(as_of_date=as_of_date))
+        if stock_report.empty:
+            st.info("Sem dados no relatório de estoque central.")
+        else:
+            stock_report["tipo_movimentacao"] = stock_report["last_movement_type"].map(MOVEMENT_LABELS).fillna(
+                stock_report["last_movement_type"]
+            )
+            report_df = stock_report.rename(
+                columns={
+                    "last_purchase_date": "data_ultima_compra",
+                    "name": "item",
+                    "stock_qty": "quantidade_estoque",
+                    "last_invoice": "numero_nf_ultima_compra",
+                    "last_unit_cost": "valor_unitario_item",
+                    "last_total_value": "valor_total_item",
+                    "last_note": "observacao",
+                }
+            )
+            st.markdown("**Relatório do estoque central**")
+            st.dataframe(
+                report_df[
+                    [
+                        "data_ultima_compra",
+                        "item",
+                        "tipo_movimentacao",
+                        "quantidade_estoque",
+                        "numero_nf_ultima_compra",
+                        "valor_unitario_item",
+                        "valor_total_item",
+                        "observacao",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
 elif menu == "Transferir Central -> Unidade":
     st.subheader("Transferência do estoque CENTRAL para HOTEL/CLUB")
