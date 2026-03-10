@@ -24,9 +24,13 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - quantidade,
    - número da NF,
    - valor unitário de compra,
-   - valor total,
+   - valor total automático (quantidade x valor unitário),
    - observação.
-3. **Lançamentos diários** de movimentação:
+3. **Importação de nota fiscal para estoque central**
+   - upload de arquivo **XML** ou **PDF**,
+   - leitura por **chave de acesso** (metadados),
+   - extração de dados da fatura e itens para lançamento automático.
+4. **Lançamentos diários** de movimentação:
    - compra,
    - envio para lavanderia,
    - retorno da lavanderia,
@@ -34,23 +38,23 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - alocação para uso,
    - retorno de uso,
    - perdas/baixas.
-4. **Contagem física diária** (estoque, lavanderia e em uso).
-5. **Dashboard operacional** com posição teórica consolidada.
+5. **Contagem física diária** (estoque, lavanderia e em uso).
+6. **Dashboard operacional** com posição teórica consolidada.
    - alerta crítico automático quando estoque atinge nível mínimo.
-6. **Auditoria IA** com:
+7. **Auditoria IA** com:
    - score de risco geral,
    - divergências físico x teórico,
    - peças retidas na lavanderia por tempo anormal,
    - taxa de relavagem por qualidade de lavagem,
    - tendências de perda,
    - ações recomendadas de investigação.
-7. **Apuração de lavanderia estilo planilha**:
+8. **Apuração de lavanderia estilo planilha**:
    - colunas diárias (quinzena/mês),
    - total de peças cobradas,
    - valor total por item (valor unitário x total),
    - relave enviado/retornado (sem cobrança),
    - perdas no período.
-8. **Fluxo com estoque central + unidades independentes**:
+9. **Fluxo com estoque central + unidades independentes**:
    - cadastro mestre de itens no **CENTRAL**,
    - transferência do CENTRAL para **HOTEL** e **CLUB**,
    - preços de lavagem independentes por unidade,

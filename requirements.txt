@@ -3,3 +3,4 @@ pandas
 plotly
 pytest
 psycopg[binary]
+pypdf

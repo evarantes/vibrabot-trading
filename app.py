@@ -4,6 +4,8 @@ from calendar import monthrange
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+import re
+import unicodedata
 
 import pandas as pd
 import plotly.express as px
@@ -13,6 +15,11 @@ sys.path.append(str(Path(__file__).resolve().parent / "src"))
 
 from codexiaauditor.audit_engine import generate_audit_report
 from codexiaauditor.database import init_db
+from codexiaauditor.invoice_parser import (
+    parse_access_key_metadata,
+    parse_emission_date_to_date,
+    parse_invoice_file,
+)
 from codexiaauditor.repository import (
     add_category,
     add_item,
@@ -95,6 +102,11 @@ def _period_bounds(period_mode: str, reference_date: date, custom_start: date, c
     start = min(custom_start, custom_end)
     end = max(custom_start, custom_end)
     return start, end
+
+
+def _norm_text(value: str) -> str:
+    base = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", base).strip().upper()
 
 
 st.sidebar.title("Menu")
@@ -384,54 +396,196 @@ elif menu == "Estoque Central e de Uso":
         else:
             central_item_map = {row["name"]: int(row["id"]) for _, row in active_central_items.iterrows()}
             central_form_labels = list(CENTRAL_STOCK_LABELS.keys())
+            tab_manual, tab_import = st.tabs(["Lançamento manual", "Importar NF (PDF/XML/Chave)"])
 
-            with st.form("form-central-stock", clear_on_submit=True):
-                f1, f2, f3 = st.columns(3)
-                movement_date = f1.date_input("Data da compra/movimento", value=date.today(), key="central_movement_date")
-                item_name = f2.selectbox("Selecionar item", options=sorted(central_item_map.keys()))
-                movement_label = f3.selectbox("Tipo de movimento", options=central_form_labels)
+            with tab_manual:
+                with st.form("form-central-stock", clear_on_submit=True):
+                    f1, f2, f3 = st.columns(3)
+                    movement_date = f1.date_input("Data da compra/movimento", value=date.today(), key="central_movement_date")
+                    item_name = f2.selectbox("Selecionar item", options=sorted(central_item_map.keys()))
+                    movement_label = f3.selectbox("Tipo de movimento", options=central_form_labels)
 
-                f4, f5, f6 = st.columns(3)
-                quantity = f4.number_input("Quantidade", min_value=1, step=1, value=1, key="central_qty")
-                invoice_number = f5.text_input("Número da NF", placeholder="Ex: 12345")
-                unit_purchase_value = f6.number_input(
-                    "Valor de compra unitário (R$)",
-                    min_value=0.0,
-                    step=0.01,
-                    value=0.0,
-                )
+                    f4, f5, f6 = st.columns(3)
+                    quantity = f4.number_input("Quantidade", min_value=1, step=1, value=1, key="central_qty")
+                    invoice_number = f5.text_input("Número da NF / chave", placeholder="Ex: 12345 ou chave de acesso")
+                    unit_purchase_value = f6.number_input(
+                        "Valor de compra unitário (R$)",
+                        min_value=0.0,
+                        step=0.01,
+                        value=0.0,
+                    )
 
-                calc_total = float(quantity) * float(unit_purchase_value)
-                g1, g2 = st.columns(2)
-                total_purchase_value = g1.number_input(
-                    "Valor total (R$)",
-                    min_value=0.0,
-                    step=0.01,
-                    value=float(calc_total),
-                )
-                note = g2.text_input("Observação")
+                    auto_total = round(float(quantity) * float(unit_purchase_value), 2)
+                    g1, g2 = st.columns(2)
+                    g1.number_input(
+                        "Valor total (R$) - automático",
+                        min_value=0.0,
+                        step=0.01,
+                        value=float(auto_total),
+                        disabled=True,
+                    )
+                    note = g2.text_input("Observação")
 
-                save_central_move = st.form_submit_button("Salvar movimentação de estoque central")
-                if save_central_move:
+                    save_central_move = st.form_submit_button("Salvar movimentação de estoque central")
+                    if save_central_move:
+                        try:
+                            movement_type = CENTRAL_STOCK_LABELS[movement_label]
+                            if movement_type == "PURCHASE" and not invoice_number.strip():
+                                st.error("Informe o número da NF/chave para lançamento de compra.")
+                            else:
+                                add_movement(
+                                    item_id=central_item_map[item_name],
+                                    movement_type=movement_type,
+                                    quantity=int(quantity),
+                                    movement_date=movement_date,
+                                    operation_unit="CENTRAL",
+                                    source_ref=invoice_number,
+                                    movement_unit_cost=float(unit_purchase_value),
+                                    movement_total_value=float(auto_total),
+                                    note=note,
+                                )
+                                st.success("Movimentação central registrada.")
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"Falha ao salvar movimentação: {exc}")
+
+            with tab_import:
+                st.markdown("**Importar nota fiscal para alimentar estoque central**")
+                up1, up2 = st.columns(2)
+                uploaded_nf_file = up1.file_uploader("Enviar NF (XML ou PDF)", type=["xml", "pdf"])
+                access_key_input = up2.text_input("Ou informar chave de acesso (44 dígitos)")
+                extract_clicked = st.button("Extrair dados da NF", key="extract_invoice_button")
+
+                if extract_clicked:
                     try:
-                        movement_type = CENTRAL_STOCK_LABELS[movement_label]
-                        if movement_type == "PURCHASE" and not invoice_number.strip():
-                            st.error("Informe o número da NF para lançamento de compra.")
+                        if uploaded_nf_file is not None:
+                            extracted = parse_invoice_file(uploaded_nf_file.name, uploaded_nf_file.getvalue())
+                        elif access_key_input.strip():
+                            extracted = parse_access_key_metadata(access_key_input)
                         else:
-                            add_movement(
-                                item_id=central_item_map[item_name],
-                                movement_type=movement_type,
-                                quantity=int(quantity),
-                                movement_date=movement_date,
-                                operation_unit="CENTRAL",
-                                source_ref=invoice_number,
-                                movement_unit_cost=float(unit_purchase_value),
-                                movement_total_value=float(total_purchase_value),
-                                note=note,
-                            )
-                            st.success("Movimentação central registrada.")
+                            raise ValueError("Envie um arquivo XML/PDF ou informe uma chave de acesso.")
+                        st.session_state["central_invoice_extract"] = extracted
+                        st.success("Dados da nota extraídos.")
                     except Exception as exc:  # noqa: BLE001
-                        st.error(f"Falha ao salvar movimentação: {exc}")
+                        st.error(f"Não foi possível extrair a nota: {exc}")
+
+                extracted = st.session_state.get("central_invoice_extract")
+                if extracted:
+                    hdr1, hdr2, hdr3, hdr4 = st.columns(4)
+                    hdr1.text_input("Número NF", value=str(extracted.get("invoice_number", "")), disabled=True)
+                    hdr2.text_input("Série", value=str(extracted.get("series", "")), disabled=True)
+                    hdr3.text_input("Data emissão", value=str(extracted.get("emission_date", "")), disabled=True)
+                    hdr4.text_input("Chave acesso", value=str(extracted.get("access_key", "")), disabled=True)
+
+                    extracted_items = extracted.get("items", [])
+                    if not extracted_items:
+                        st.info(
+                            "Sem itens extraídos automaticamente. Para chave de acesso isolada, "
+                            "a extração de itens depende de integração externa de consulta."
+                        )
+                    else:
+                        st.markdown("**Itens extraídos da nota**")
+                        central_names = sorted(central_item_map.keys())
+                        normalized_name_map = {_norm_text(name): name for name in central_names}
+
+                        with st.form("form-imported-items"):
+                            launch_payload: list[dict[str, Any]] = []
+                            for idx, ext_item in enumerate(extracted_items):
+                                c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 2])
+                                description = str(ext_item.get("description", "")).strip()
+                                qty_default = float(ext_item.get("quantity", 0) or 0)
+                                unit_default = float(ext_item.get("unit_value", 0) or 0)
+
+                                desc_norm = _norm_text(description)
+                                default_name = ""
+                                if desc_norm in normalized_name_map:
+                                    default_name = normalized_name_map[desc_norm]
+                                else:
+                                    for norm_name, original_name in normalized_name_map.items():
+                                        if desc_norm and (desc_norm in norm_name or norm_name in desc_norm):
+                                            default_name = original_name
+                                            break
+
+                                options = ["-- selecione item --"] + central_names
+                                default_idx = options.index(default_name) if default_name in options else 0
+                                selected_item_name = c1.selectbox(
+                                    f"Item sistema #{idx + 1}",
+                                    options=options,
+                                    index=default_idx,
+                                    key=f"import_item_{idx}",
+                                )
+                                qty = c2.number_input(
+                                    f"Qtd #{idx + 1}",
+                                    min_value=0.0,
+                                    step=1.0,
+                                    value=max(qty_default, 0.0),
+                                    key=f"import_qty_{idx}",
+                                )
+                                unit_val = c3.number_input(
+                                    f"Vlr unit #{idx + 1}",
+                                    min_value=0.0,
+                                    step=0.01,
+                                    value=max(unit_default, 0.0),
+                                    key=f"import_unit_{idx}",
+                                )
+                                c4.number_input(
+                                    f"Vlr total #{idx + 1}",
+                                    min_value=0.0,
+                                    step=0.01,
+                                    value=round(float(qty) * float(unit_val), 2),
+                                    disabled=True,
+                                    key=f"import_total_{idx}",
+                                )
+                                import_row = c5.checkbox(
+                                    f"Importar #{idx + 1}",
+                                    value=default_idx > 0,
+                                    key=f"import_flag_{idx}",
+                                )
+                                st.caption(f"Descrição NF: {description}")
+
+                                launch_payload.append(
+                                    {
+                                        "selected_item_name": selected_item_name,
+                                        "description": description,
+                                        "qty": float(qty),
+                                        "unit_val": float(unit_val),
+                                        "import_row": bool(import_row),
+                                    }
+                                )
+
+                            launch_import = st.form_submit_button("Lançar itens importados no estoque central")
+                            if launch_import:
+                                imported_count = 0
+                                emission_date = parse_emission_date_to_date(
+                                    str(extracted.get("emission_date", "")),
+                                    fallback=date.today(),
+                                )
+                                source_ref = str(extracted.get("invoice_number") or extracted.get("access_key") or "").strip()
+                                for row in launch_payload:
+                                    if not row["import_row"]:
+                                        continue
+                                    if row["selected_item_name"] == "-- selecione item --":
+                                        continue
+                                    if row["qty"] <= 0:
+                                        continue
+                                    item_id = central_item_map[row["selected_item_name"]]
+                                    auto_total = round(row["qty"] * row["unit_val"], 2)
+                                    add_movement(
+                                        item_id=item_id,
+                                        movement_type="PURCHASE",
+                                        quantity=int(round(row["qty"])),
+                                        movement_date=emission_date,
+                                        operation_unit="CENTRAL",
+                                        source_ref=source_ref,
+                                        movement_unit_cost=row["unit_val"],
+                                        movement_total_value=auto_total,
+                                        note=f"Importado de NF - Item NF: {row['description']}",
+                                    )
+                                    imported_count += 1
+
+                                if imported_count == 0:
+                                    st.warning("Nenhum item foi importado. Marque itens válidos e selecione item do sistema.")
+                                else:
+                                    st.success(f"{imported_count} item(ns) importado(s) com sucesso para o estoque central.")
 
         stock_report = pd.DataFrame(get_central_stock_report(as_of_date=as_of_date))
         if stock_report.empty:
