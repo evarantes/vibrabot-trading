@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parent / "src"))
 from codexiaauditor.audit_engine import generate_audit_report
 from codexiaauditor.database import init_db
 from codexiaauditor.repository import (
+    add_category,
     add_item,
     add_movement,
     get_balances,
@@ -21,8 +22,10 @@ from codexiaauditor.repository import (
     get_item_theoretical_stock,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
+    list_categories,
     list_items,
     list_recent_movements,
+    set_item_active,
     transfer_central_to_unit,
     update_item,
     upsert_inventory_count,
@@ -126,67 +129,123 @@ if menu == "Cadastro de Itens (Central)":
     if selected_unit != "CENTRAL":
         st.info("O cadastro mestre é no estoque CENTRAL. A unidade selecionada no menu lateral não altera este módulo.")
 
-    with st.form("form-item", clear_on_submit=True):
-        col1, col2, col3, col4 = st.columns(4)
-        name = col1.text_input("Nome do item", placeholder="Ex: Lençol solteiro 180 fios")
-        category = col2.text_input("Categoria", value="Roupa de cama")
-        par_level = col3.number_input("Nível mínimo (par level)", min_value=0, step=1, value=0)
-        laundry_cost = col4.number_input("Valor unit. base (R$)", min_value=0.0, step=0.1, value=0.0)
-        submitted = st.form_submit_button("Salvar item")
-        if submitted:
-            if not name.strip():
-                st.error("Informe o nome do item.")
-            else:
+    with st.popover("Criar categoria"):
+        with st.form("form-create-category", clear_on_submit=True):
+            new_category_name = st.text_input("Nome da categoria", placeholder="Ex: Roupa de Banho")
+            save_category = st.form_submit_button("Salvar categoria")
+            if save_category:
                 try:
-                    add_item(
-                        name=name,
-                        category=category,
-                        par_level=int(par_level),
-                        laundry_unit_cost=float(laundry_cost),
-                        operation_unit="CENTRAL",
-                    )
-                    st.success("Item cadastrado com sucesso.")
+                    add_category(new_category_name)
+                    st.success("Categoria criada.")
+                    st.rerun()
                 except Exception as exc:  # noqa: BLE001
-                    st.error(f"Não foi possível cadastrar: {exc}")
+                    st.error(f"Não foi possível criar categoria: {exc}")
+
+    categories = list_categories(active_only=True)
+    category_names = [str(row["name"]) for row in categories]
+    if not category_names:
+        st.warning("Nenhuma categoria cadastrada. Crie ao menos uma categoria para cadastrar itens.")
+    else:
+        with st.form("form-item", clear_on_submit=True):
+            col1, col2, col3 = st.columns(3)
+            name = col1.text_input("Nome do item", placeholder="Ex: Lençol 180 fios")
+            category = col2.selectbox("Categoria", options=category_names)
+            par_level = col3.number_input("Nível mínimo (reserva)", min_value=0, step=1, value=0)
+            submitted = st.form_submit_button("Salvar item")
+            if submitted:
+                if not name.strip():
+                    st.error("Informe o nome do item.")
+                else:
+                    try:
+                        add_item(
+                            name=name,
+                            category=category,
+                            par_level=int(par_level),
+                            laundry_unit_cost=0.0,
+                            operation_unit="CENTRAL",
+                        )
+                        st.success("Item cadastrado com sucesso.")
+                        st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Não foi possível cadastrar: {exc}")
 
     items_df = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=False))
     if items_df.empty:
         st.warning("Nenhum item cadastrado ainda.")
     else:
-        with st.form("form-update-item"):
-            c1, c2 = st.columns(2)
-            item_name = c1.selectbox("Selecionar item para editar", options=items_df["name"].tolist())
-            current = items_df[items_df["name"] == item_name].iloc[0]
-            c3, c4, c5, c6, c7 = st.columns(5)
-            new_name = c3.text_input("Nome", value=str(current["name"]))
-            new_category = c4.text_input("Categoria", value=str(current["category"]))
-            new_par_level = c5.number_input("Par level", min_value=0, step=1, value=int(current["par_level"]))
-            new_cost = c6.number_input(
-                "Valor unit. lavagem (R$)",
-                min_value=0.0,
-                step=0.1,
-                value=float(current["laundry_unit_cost"] or 0.0),
-            )
-            new_active = c7.checkbox("Ativo", value=bool(current["active"]))
-            update_submitted = c2.form_submit_button("Salvar edição")
-            if update_submitted:
-                try:
-                    item_id = int(current["id"])
-                    update_item(
-                        item_id=item_id,
-                        name=new_name,
-                        category=new_category,
-                        par_level=int(new_par_level),
-                        laundry_unit_cost=float(new_cost),
-                        active=bool(new_active),
-                    )
-                    st.success("Cadastro atualizado com sucesso.")
-                    items_df = pd.DataFrame(list_items(operation_unit="CENTRAL", active_only=False))
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Não foi possível atualizar item: {exc}")
+        select_labels = [f"{int(row['id'])} - {row['name']}" for _, row in items_df.iterrows()]
+        select_map = {label: int(label.split(" - ")[0]) for label in select_labels}
 
-        items_df["laundry_unit_cost"] = pd.to_numeric(items_df["laundry_unit_cost"], errors="coerce").fillna(0.0)
-        st.dataframe(items_df, use_container_width=True, hide_index=True)
+        a1, a2, a3, a4 = st.columns(4)
+        selected_label = a1.selectbox("Item para ação", options=select_labels)
+        selected_item_id = select_map[selected_label]
+
+        if a2.button("Editar item"):
+            st.session_state["central_edit_item_id"] = selected_item_id
+        if a3.button("Ativar item"):
+            set_item_active(selected_item_id, True)
+            st.success("Item ativado.")
+            st.rerun()
+        if a4.button("Desativar item"):
+            set_item_active(selected_item_id, False)
+            st.success("Item desativado.")
+            st.rerun()
+
+        edit_item_id = st.session_state.get("central_edit_item_id")
+        if edit_item_id is not None:
+            edit_row = items_df[items_df["id"] == edit_item_id]
+            if not edit_row.empty:
+                current = edit_row.iloc[0]
+                edit_categories = category_names.copy()
+                current_category = str(current["category"])
+                if current_category not in edit_categories:
+                    edit_categories.append(current_category)
+
+                with st.form("form-edit-item"):
+                    st.markdown("**Editar item selecionado**")
+                    e1, e2, e3, e4 = st.columns(4)
+                    new_name = e1.text_input("Nome", value=str(current["name"]))
+                    default_idx = edit_categories.index(current_category)
+                    new_category = e2.selectbox("Categoria", options=edit_categories, index=default_idx)
+                    new_par_level = e3.number_input(
+                        "Nível mínimo (reserva)",
+                        min_value=0,
+                        step=1,
+                        value=int(current["par_level"]),
+                    )
+                    new_active = e4.checkbox("Ativo", value=bool(current["active"]))
+                    save_edit = st.form_submit_button("Salvar edição")
+                    if save_edit:
+                        try:
+                            update_item(
+                                item_id=int(current["id"]),
+                                name=new_name,
+                                category=new_category,
+                                par_level=int(new_par_level),
+                                laundry_unit_cost=float(current["laundry_unit_cost"] or 0.0),
+                                active=bool(new_active),
+                            )
+                            st.success("Item atualizado com sucesso.")
+                            st.session_state.pop("central_edit_item_id", None)
+                            st.rerun()
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"Falha ao editar item: {exc}")
+
+        st.dataframe(
+            items_df[
+                ["id", "name", "category", "par_level", "active"]
+            ].rename(
+                columns={
+                    "id": "id",
+                    "name": "item",
+                    "category": "categoria",
+                    "par_level": "nivel_minimo",
+                    "active": "ativo",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 elif menu == "Transferir Central -> Unidade":
     st.subheader("Transferência do estoque CENTRAL para HOTEL/CLUB")
@@ -490,6 +549,25 @@ elif menu == "Painel de Controle":
         c1.metric("Total em estoque (teórico)", int(balances["stock_theoretical"].sum()))
         c2.metric("Total na lavanderia (teórico)", int(balances["laundry_theoretical"].sum()))
         c3.metric("Total em uso (teórico)", int(balances["in_use_theoretical"].sum()))
+
+        critical_df = balances[balances["stock_theoretical"] <= balances["par_level"]].copy()
+        if not critical_df.empty:
+            st.error(
+                f"ALERTA CRITICO: {len(critical_df)} item(ns) no nível mínimo ou abaixo."
+            )
+            st.dataframe(
+                critical_df[
+                    ["name", "stock_theoretical", "par_level"]
+                ].rename(
+                    columns={
+                        "name": "item",
+                        "stock_theoretical": "estoque_atual",
+                        "par_level": "nivel_minimo",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
         view_df = balances[
             [

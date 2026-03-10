@@ -14,7 +14,9 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 ## O que o sistema faz
 
 1. **Cadastro de itens de enxoval** (lençol, toalha, fronha etc.)
-   - com edição completa (nome, categoria, par level, ativo, valor unitário de lavagem)
+   - no módulo **Cadastro de Itens (Central)**,
+   - categoria escolhida por lista (com botão para criar categoria),
+   - edição completa (nome, categoria, nível mínimo, ativo/inativo).
 2. **Lançamentos diários** de movimentação:
    - compra,
    - envio para lavanderia,
@@ -25,6 +27,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - perdas/baixas.
 3. **Contagem física diária** (estoque, lavanderia e em uso).
 4. **Dashboard operacional** com posição teórica consolidada.
+   - alerta crítico automático quando estoque atinge nível mínimo.
 5. **Auditoria IA** com:
    - score de risco geral,
    - divergências físico x teórico,

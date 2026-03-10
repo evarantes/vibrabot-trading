@@ -77,6 +77,17 @@ def _init_postgres() -> None:
         execute(
             conn,
             """
+            CREATE TABLE IF NOT EXISTS categories (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """,
+        )
+        execute(
+            conn,
+            """
             CREATE TABLE IF NOT EXISTS items (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -117,6 +128,16 @@ def _init_postgres() -> None:
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_items_name_unit
             ON items (name, operation_unit);
+            """,
+        )
+        execute(
+            conn,
+            """
+            INSERT INTO categories (name)
+            SELECT DISTINCT category
+            FROM items
+            WHERE category IS NOT NULL AND category <> ''
+            ON CONFLICT (name) DO NOTHING;
             """,
         )
         execute(
@@ -195,6 +216,13 @@ def _init_sqlite() -> None:
             """
             PRAGMA foreign_keys = ON;
 
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -248,6 +276,14 @@ def _init_sqlite() -> None:
             "UPDATE inventory_counts SET operation_unit = 'HOTEL' WHERE operation_unit IS NULL OR operation_unit IN ('', 'LA_PLAGE')"
         )
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_items_name_unit ON items (name, operation_unit)")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO categories (name)
+            SELECT DISTINCT category
+            FROM items
+            WHERE category IS NOT NULL AND category <> ''
+            """
+        )
 
 
 def _ensure_sqlite_column(conn: Any, table_name: str, column_name: str, column_sql: str) -> None:

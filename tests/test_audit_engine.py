@@ -4,13 +4,16 @@ from datetime import date, timedelta
 from codexiaauditor import database
 from codexiaauditor.audit_engine import generate_audit_report
 from codexiaauditor.repository import (
+    add_category,
     add_item,
     add_movement,
     get_balances,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
     get_item_theoretical_stock,
+    list_categories,
     list_items,
+    set_item_active,
     transfer_central_to_unit,
     upsert_inventory_count,
 )
@@ -203,3 +206,17 @@ def test_saldo_item_filtra_por_unidade(tmp_path):
         )
 
     assert get_item_theoretical_stock(central_item_id, today, operation_unit="CENTRAL") == 100
+
+
+def test_categoria_e_ativacao_de_item(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    add_category("Roupa de Cama")
+    categories = list_categories()
+    assert any(cat["name"] == "Roupa de Cama" for cat in categories)
+
+    add_item("Lencol solteiro", "Roupa de Cama", operation_unit="CENTRAL")
+    item = list_items(operation_unit="CENTRAL")[0]
+    set_item_active(int(item["id"]), False)
+
+    active_items = list_items(operation_unit="CENTRAL", active_only=True)
+    assert all(int(x["id"]) != int(item["id"]) for x in active_items)

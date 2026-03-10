@@ -65,14 +65,42 @@ def add_item(
         )
 
 
+def add_category(name: str) -> None:
+    clean_name = name.strip()
+    if not clean_name:
+        raise ValueError("Nome da categoria é obrigatório.")
+    with get_connection() as conn:
+        execute(
+            conn,
+            """
+            INSERT INTO categories (name, active)
+            VALUES (?, TRUE)
+            """,
+            (clean_name,),
+        )
+
+
+def list_categories(active_only: bool = True) -> list[dict[str, Any]]:
+    query = "SELECT id, name, active FROM categories"
+    params: list[Any] = []
+    if active_only:
+        query += " WHERE active = TRUE"
+    query += " ORDER BY name"
+
+    with get_connection() as conn:
+        rows = execute(conn, query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
 def update_item(
     item_id: int,
     name: str,
     category: str,
     par_level: int,
-    laundry_unit_cost: float,
+    laundry_unit_cost: float | None = None,
     active: bool = True,
 ) -> None:
+    set_laundry = 0.0 if laundry_unit_cost is None else max(float(laundry_unit_cost), 0.0)
     with get_connection() as conn:
         execute(
             conn,
@@ -90,10 +118,23 @@ def update_item(
                 name.strip(),
                 category.strip(),
                 max(par_level, 0),
-                max(float(laundry_unit_cost), 0.0),
+                set_laundry,
                 bool(active),
                 item_id,
             ),
+        )
+
+
+def set_item_active(item_id: int, active: bool) -> None:
+    with get_connection() as conn:
+        execute(
+            conn,
+            """
+            UPDATE items
+            SET active = ?
+            WHERE id = ?
+            """,
+            (bool(active), item_id),
         )
 
 
