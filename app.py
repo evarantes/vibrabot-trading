@@ -280,7 +280,7 @@ elif menu == "Transferir Central -> Unidade":
                 saldo_base_date,
                 operation_unit="CENTRAL",
             )
-            label = f"{row['name']} (saldo central em {saldo_base_date.strftime('%d/%m/%Y')}: {stock})"
+            label = f"{row['name']} - disponível: {stock}"
             transfer_options.append(label)
             transfer_map[label] = int(row["id"])
 
