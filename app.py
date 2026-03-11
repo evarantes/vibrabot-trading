@@ -145,6 +145,11 @@ def _norm_text(value: str) -> str:
     return re.sub(r"\s+", " ", base).strip().upper()
 
 
+def _format_brl(value: float | int) -> str:
+    numeric = float(value or 0.0)
+    return f"R$ {numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 st.markdown(
     """
     <style>
@@ -969,14 +974,24 @@ elif menu == "Apuração Lavanderia (Planilha)":
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Peças cobradas no período", total_billed_qty)
-        m2.metric("Valor total cobrado (R$)", f"{total_billed_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        m2.metric("Valor total cobrado (R$)", _format_brl(total_billed_value))
         m3.metric("Relave enviado (sem cobrança)", total_rewash_sent)
         m4.metric("Relave pendente", total_rewash_sent - total_rewash_returned)
         st.metric("Perdas no período", total_losses)
 
-        st.dataframe(sheet_df, use_container_width=True, hide_index=True)
+        display_sheet_df = sheet_df.rename(
+            columns={
+                "VALOR UNIT": "VALOR UNITÁRIO (R$/PEÇA)",
+                "VALOR TOTAL": "VALOR MONETÁRIO TOTAL (R$)",
+                "TOTAL": "TOTAL PEÇAS",
+            }
+        ).copy()
+        display_sheet_df["VALOR UNITÁRIO (R$/PEÇA)"] = display_sheet_df["VALOR UNITÁRIO (R$/PEÇA)"].apply(_format_brl)
+        display_sheet_df["VALOR MONETÁRIO TOTAL (R$)"] = display_sheet_df["VALOR MONETÁRIO TOTAL (R$)"].apply(_format_brl)
 
-        csv_data = sheet_df.to_csv(index=False).encode("utf-8-sig")
+        st.dataframe(display_sheet_df, use_container_width=True, hide_index=True)
+
+        csv_data = display_sheet_df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             "Baixar apuração em CSV",
             data=csv_data,
