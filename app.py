@@ -1492,6 +1492,25 @@ elif menu == "Auditoria IA":
     )
     l2.metric("Relavagens sem cobrança enviadas (30d)", int(report["laundry_summary_30d"]["rewash_sent"]))
 
+    delay_summary = report.get("laundry_delay_summary", {})
+    d1, d2 = st.columns(2)
+    d1.metric(
+        "Peças > 3 dias na lavanderia",
+        int(delay_summary.get("laundry_over_3d_qty", 0)),
+    )
+    d2.metric(
+        "Peças de relavagem > 3 dias",
+        int(delay_summary.get("rewash_over_3d_qty", 0)),
+    )
+    if int(delay_summary.get("rewash_over_3d_qty", 0)) > 0:
+        st.error(
+            "ALERTA DE RELAVAGEM: há peças de relavagem paradas há mais de 3 dias na lavanderia."
+        )
+    if int(delay_summary.get("laundry_over_3d_qty", 0)) > 0:
+        st.warning(
+            "ALERTA DE PRAZO: há peças gerais de lavanderia com permanência acima de 3 dias."
+        )
+
     findings_df = pd.DataFrame(report["findings"])
     if findings_df.empty:
         st.success("Nenhum desvio crítico detectado para a data selecionada.")

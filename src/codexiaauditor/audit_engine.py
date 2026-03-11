@@ -13,8 +13,50 @@ from .repository import (
 )
 
 
-def _pending_laundry_info(movements: list[dict[str, Any]], as_of_date: date) -> tuple[int, int]:
-    pending_batches: list[dict[str, Any]] = []
+def _consume_return(pending_batches: list[dict[str, Any]], return_qty: int) -> None:
+    remaining_return = max(int(return_qty), 0)
+    while remaining_return > 0 and pending_batches:
+        first_batch = pending_batches[0]
+        abatido = min(first_batch["qty"], remaining_return)
+        first_batch["qty"] -= abatido
+        remaining_return -= abatido
+        if first_batch["qty"] == 0:
+            pending_batches.pop(0)
+
+
+def _pending_delay_metrics(
+    pending_batches: list[dict[str, Any]],
+    as_of_date: date,
+    delay_days_threshold: int = 3,
+) -> dict[str, int]:
+    pending_qty = sum(int(batch["qty"]) for batch in pending_batches)
+    if pending_qty <= 0:
+        return {
+            "pending_qty": 0,
+            "max_days_pending": 0,
+            "qty_over_threshold": 0,
+        }
+
+    max_days_pending = max((as_of_date - batch["date"]).days for batch in pending_batches)
+    qty_over_threshold = sum(
+        int(batch["qty"])
+        for batch in pending_batches
+        if (as_of_date - batch["date"]).days >= delay_days_threshold
+    )
+    return {
+        "pending_qty": pending_qty,
+        "max_days_pending": max_days_pending,
+        "qty_over_threshold": qty_over_threshold,
+    }
+
+
+def _pending_laundry_info(
+    movements: list[dict[str, Any]],
+    as_of_date: date,
+    delay_days_threshold: int = 3,
+) -> dict[str, dict[str, int]]:
+    laundry_batches: list[dict[str, Any]] = []
+    rewash_batches: list[dict[str, Any]] = []
 
     for move in movements:
         raw_date = move["movement_date"]
@@ -22,26 +64,21 @@ def _pending_laundry_info(movements: list[dict[str, Any]], as_of_date: date) -> 
         qty = int(move["quantity"])
         move_type = move["movement_type"]
 
-        if move_type in {"LAUNDRY_SENT", "LAUNDRY_REWASH_SENT"}:
-            pending_batches.append({"date": move_date, "qty": qty})
+        if move_type == "LAUNDRY_SENT":
+            laundry_batches.append({"date": move_date, "qty": qty})
             continue
+        if move_type == "LAUNDRY_REWASH_SENT":
+            rewash_batches.append({"date": move_date, "qty": qty})
+            continue
+        if move_type == "LAUNDRY_RETURNED":
+            _consume_return(laundry_batches, qty)
+            continue
+        if move_type == "LAUNDRY_REWASH_RETURNED":
+            _consume_return(rewash_batches, qty)
 
-        remaining_return = qty
-        while remaining_return > 0 and pending_batches:
-            first_batch = pending_batches[0]
-            abatido = min(first_batch["qty"], remaining_return)
-            first_batch["qty"] -= abatido
-            remaining_return -= abatido
-            if first_batch["qty"] == 0:
-                pending_batches.pop(0)
-
-    pending_qty = sum(batch["qty"] for batch in pending_batches)
-    if pending_qty <= 0 or not pending_batches:
-        return 0, 0
-
-    oldest_date = pending_batches[0]["date"]
-    max_days_pending = (as_of_date - oldest_date).days
-    return pending_qty, max_days_pending
+    laundry = _pending_delay_metrics(laundry_batches, as_of_date, delay_days_threshold=delay_days_threshold)
+    rewash = _pending_delay_metrics(rewash_batches, as_of_date, delay_days_threshold=delay_days_threshold)
+    return {"laundry": laundry, "rewash": rewash}
 
 
 def _usage_anomaly_score(series: list[dict[str, Any]]) -> tuple[int, str]:
@@ -76,6 +113,10 @@ def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> di
     findings: list[dict[str, Any]] = []
     risk_by_item: dict[int, int] = {}
     global_risk_points = 0
+    laundry_over_3d_qty_total = 0
+    rewash_over_3d_qty_total = 0
+    laundry_items_with_delay = 0
+    rewash_items_with_delay = 0
 
     for row in balances:
         item_id = int(row["id"])
@@ -150,9 +191,13 @@ def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> di
                 risk_by_item[item_id] += 10
 
         laundry_moves = get_laundry_movements(item_id, as_of_date, operation_unit=operation_unit)
-        pending_qty, pending_days = _pending_laundry_info(laundry_moves, as_of_date)
-        if pending_qty > 0 and pending_days >= 3:
-            severity = "alta" if pending_days >= 5 else "media"
+        pending_info = _pending_laundry_info(laundry_moves, as_of_date)
+
+        laundry_pending = pending_info["laundry"]
+        if laundry_pending["qty_over_threshold"] > 0:
+            laundry_items_with_delay += 1
+            laundry_over_3d_qty_total += laundry_pending["qty_over_threshold"]
+            severity = "alta" if laundry_pending["max_days_pending"] >= 5 else "media"
             score = 16 if severity == "alta" else 9
             findings.append(
                 {
@@ -160,10 +205,31 @@ def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> di
                     "severidade": severity,
                     "area": "lavanderia",
                     "descricao": (
-                        f"{pending_qty} peças pendentes de retorno da lavanderia há até "
-                        f"{pending_days} dia(s)."
+                        f"{laundry_pending['qty_over_threshold']} peça(s) com mais de 3 dias na lavanderia "
+                        f"(pendente total={laundry_pending['pending_qty']}, atraso máximo={laundry_pending['max_days_pending']} dias)."
                     ),
                     "acao": "Cobrar retorno por lote e cruzar com as notas de envio diárias.",
+                    "risco_pontos": score,
+                }
+            )
+            risk_by_item[item_id] += score
+
+        rewash_pending = pending_info["rewash"]
+        if rewash_pending["qty_over_threshold"] > 0:
+            rewash_items_with_delay += 1
+            rewash_over_3d_qty_total += rewash_pending["qty_over_threshold"]
+            severity = "alta" if rewash_pending["max_days_pending"] >= 4 else "media"
+            score = 18 if severity == "alta" else 10
+            findings.append(
+                {
+                    "item": item_name,
+                    "severidade": severity,
+                    "area": "relavagem",
+                    "descricao": (
+                        f"{rewash_pending['qty_over_threshold']} peça(s) de relavagem com mais de 3 dias na lavanderia "
+                        f"(pendente total={rewash_pending['pending_qty']}, atraso máximo={rewash_pending['max_days_pending']} dias)."
+                    ),
+                    "acao": "Priorizar devolução das relavagens abertas e cobrar SLA específico da lavanderia.",
                     "risco_pontos": score,
                 }
             )
@@ -238,6 +304,13 @@ def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> di
         "overall_risk_score": overall_score,
         "items_with_alert": items_with_alert,
         "laundry_summary_30d": laundry_summary_30d,
+        "laundry_delay_summary": {
+            "delay_days_threshold": 3,
+            "laundry_over_3d_qty": laundry_over_3d_qty_total,
+            "rewash_over_3d_qty": rewash_over_3d_qty_total,
+            "laundry_items_with_delay": laundry_items_with_delay,
+            "rewash_items_with_delay": rewash_items_with_delay,
+        },
         "findings": findings,
         "balances": balances,
     }

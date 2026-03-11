@@ -126,6 +126,27 @@ def test_relavagem_controlada_sem_cobranca(tmp_path):
     assert summary["rewash_sent"] == 8
 
 
+def test_audit_sinaliza_atraso_lavanderia_e_relavagem(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    today = date.today()
+
+    add_item("Roupão", "Banho", par_level=5, operation_unit="HOTEL")
+    item_id = list_items(operation_unit="HOTEL")[0]["id"]
+
+    add_movement(item_id, "LAUNDRY_SENT", 20, today - timedelta(days=4), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_RETURNED", 8, today - timedelta(days=1), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_REWASH_SENT", 7, today - timedelta(days=5), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_REWASH_RETURNED", 3, today - timedelta(days=1), operation_unit="HOTEL")
+
+    report = generate_audit_report(today, operation_unit="HOTEL")
+    delay = report["laundry_delay_summary"]
+
+    assert delay["laundry_over_3d_qty"] == 12
+    assert delay["rewash_over_3d_qty"] == 4
+    assert any(row["area"] == "lavanderia" and "mais de 3 dias" in row["descricao"] for row in report["findings"])
+    assert any(row["area"] == "relavagem" and "mais de 3 dias" in row["descricao"] for row in report["findings"])
+
+
 def test_apuracao_planilha_por_periodo(tmp_path):
     _prepare_tmp_db(tmp_path)
     base_date = date(2026, 3, 15)
