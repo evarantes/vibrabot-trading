@@ -57,6 +57,7 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 9. **Fluxo com estoque central + unidades independentes**:
    - cadastro mestre de itens no **CENTRAL**,
    - transferência do CENTRAL para **HOTEL** e **CLUB**,
+   - histórico de transferências com edição e anulação,
    - preços de lavagem independentes por unidade,
    - idas/voltas da lavanderia, relave e perdas independentes por unidade.
 

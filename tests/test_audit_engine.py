@@ -7,11 +7,14 @@ from codexiaauditor.repository import (
     add_category,
     add_item,
     add_movement,
+    cancel_transfer,
+    edit_transfer,
     get_central_stock_report,
     get_balances,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
     get_item_theoretical_stock,
+    list_recent_transfers,
     list_categories,
     list_items,
     set_item_active,
@@ -255,3 +258,36 @@ def test_relatorio_estoque_central_com_dados_compra(tmp_path):
     assert str(row["last_invoice"]) == "NF-999"
     assert float(row["last_unit_cost"]) == 5.5
     assert float(row["last_total_value"]) == 1100.0
+
+
+def test_transferencia_com_historico_edicao_e_anulacao(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    ref = date(2026, 3, 10)
+
+    add_item("Guardanapo", "Mesa", operation_unit="CENTRAL")
+    central_item_id = list_items(operation_unit="CENTRAL")[0]["id"]
+    add_movement(central_item_id, "PURCHASE", 100, ref, operation_unit="CENTRAL")
+
+    created = transfer_central_to_unit(
+        central_item_id=central_item_id,
+        target_unit="HOTEL",
+        quantity=20,
+        movement_date=ref,
+        note="Primeira transferência",
+    )
+    transfer_id = int(created["transfer_id"])
+
+    edited = edit_transfer(
+        transfer_id=transfer_id,
+        target_unit="CLUB",
+        quantity=10,
+        transfer_date=ref,
+        note="Transferência editada",
+    )
+    new_transfer_id = int(edited["transfer_id"])
+
+    cancel_transfer(new_transfer_id, cancel_reason="Teste anulação")
+    history = list_recent_transfers(limit=5)
+
+    assert any(int(row["id"]) == transfer_id and row["status"] == "CANCELLED" for row in history)
+    assert any(int(row["id"]) == new_transfer_id and row["status"] == "CANCELLED" for row in history)

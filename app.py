@@ -24,15 +24,19 @@ from codexiaauditor.repository import (
     add_category,
     add_item,
     add_movement,
+    cancel_transfer,
+    edit_transfer,
     get_central_stock_report,
     get_balances,
     get_daily_movement_totals,
     get_item_theoretical_stock,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
+    get_transfer_by_id,
     list_categories,
     list_items,
     list_recent_movements,
+    list_recent_transfers,
     set_item_active,
     transfer_central_to_unit,
     update_item,
@@ -266,18 +270,12 @@ elif menu == "Transferir Central -> Unidade":
     if central_items.empty:
         st.warning("Cadastre itens no estoque CENTRAL antes de transferir.")
     else:
-        saldo_base_date = st.date_input(
-            "Data-base do saldo central",
-            value=date.today(),
-            help="Os saldos exibidos para transferência usam esta data-base.",
-            key="transfer_saldo_base_date",
-        )
         transfer_options = []
         transfer_map: dict[str, int] = {}
         for _, row in central_items.iterrows():
             stock = get_item_theoretical_stock(
                 int(row["id"]),
-                saldo_base_date,
+                date.today(),
                 operation_unit="CENTRAL",
             )
             label = f"{row['name']} - disponível: {stock}"
@@ -285,21 +283,12 @@ elif menu == "Transferir Central -> Unidade":
             transfer_map[label] = int(row["id"])
 
         with st.form("form-transfer-central", clear_on_submit=True):
-            t1, t2, t3, t4 = st.columns(4)
+            t1, t2, t3, t4, t5 = st.columns(5)
             selected_label = t1.selectbox("Item do CENTRAL", options=transfer_options)
             target_unit = t2.selectbox("Destino", options=["HOTEL", "CLUB"])
             qty = t3.number_input("Quantidade a transferir", min_value=1, step=1, value=1)
-            transfer_date = t4.date_input("Data da transferência", value=saldo_base_date)
-            x1, x2, x3 = st.columns(3)
-            unit_laundry_cost = x1.number_input(
-                "Valor da lavagem no destino (R$)",
-                min_value=0.0,
-                step=0.1,
-                value=0.0,
-                help="Se o item já existir na unidade e informar valor > 0, atualiza o valor.",
-            )
-            source_ref = x2.text_input("Referência", placeholder="NF, ordem interna")
-            note = x3.text_input("Observação")
+            transfer_date = t4.date_input("Data da transferência", value=date.today())
+            note = t5.text_input("Observação")
             transfer_submitted = st.form_submit_button("Transferir")
             if transfer_submitted:
                 try:
@@ -309,16 +298,107 @@ elif menu == "Transferir Central -> Unidade":
                         target_unit=target_unit,
                         quantity=int(qty),
                         movement_date=transfer_date,
-                        laundry_unit_cost=float(unit_laundry_cost),
-                        source_ref=source_ref,
+                        laundry_unit_cost=0.0,
+                        source_ref="",
                         note=note,
                     )
                     st.success(
-                        f"Transferência concluída. Item CENTRAL #{result['central_item_id']} -> "
-                        f"item {target_unit} #{result['target_item_id']} ({result['quantity']} un.)."
+                        f"Transferência #{result['transfer_id']} concluída: "
+                        f"{result['quantity']} un. para {target_unit}."
                     )
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Falha na transferência: {exc}")
+
+        st.markdown("**Histórico das últimas transferências**")
+        transfers_df = pd.DataFrame(list_recent_transfers(limit=100))
+        if transfers_df.empty:
+            st.info("Ainda não há transferências registradas.")
+        else:
+            display_df = transfers_df.rename(
+                columns={
+                    "id": "id",
+                    "transfer_date": "data_transferencia",
+                    "central_item_name": "item_central",
+                    "target_unit": "destino",
+                    "quantity": "quantidade",
+                    "status": "status",
+                    "note": "observacao",
+                    "cancel_reason": "motivo_anulacao",
+                }
+            )
+            st.dataframe(
+                display_df[
+                    [
+                        "id",
+                        "data_transferencia",
+                        "item_central",
+                        "destino",
+                        "quantidade",
+                        "status",
+                        "observacao",
+                        "motivo_anulacao",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            action_options = [
+                f"#{int(row['id'])} | {row['central_item_name']} -> {row['target_unit']} | "
+                f"qtd={int(row['quantity'])} | status={row['status']}"
+                for _, row in transfers_df.iterrows()
+            ]
+            selected_action = st.selectbox("Transferência para ação", options=action_options)
+            selected_transfer_id = int(selected_action.split("|")[0].replace("#", "").strip())
+            selected_transfer = get_transfer_by_id(selected_transfer_id)
+
+            if selected_transfer and selected_transfer["status"] == "ACTIVE":
+                with st.expander("Editar transferência", expanded=False):
+                    with st.form("form-edit-transfer"):
+                        e1, e2, e3, e4 = st.columns(4)
+                        new_target = e1.selectbox(
+                            "Novo destino",
+                            options=["HOTEL", "CLUB"],
+                            index=0 if str(selected_transfer["target_unit"]) == "HOTEL" else 1,
+                        )
+                        new_qty = e2.number_input(
+                            "Nova quantidade",
+                            min_value=1,
+                            step=1,
+                            value=int(selected_transfer["quantity"]),
+                        )
+                        raw_date = selected_transfer["transfer_date"]
+                        current_transfer_date = raw_date if isinstance(raw_date, date) else date.fromisoformat(str(raw_date))
+                        new_date = e3.date_input("Nova data", value=current_transfer_date)
+                        new_note = e4.text_input("Nova observação", value=str(selected_transfer.get("note") or ""))
+                        submit_edit = st.form_submit_button("Salvar edição da transferência")
+                        if submit_edit:
+                            try:
+                                new_transfer = edit_transfer(
+                                    transfer_id=selected_transfer_id,
+                                    target_unit=new_target,
+                                    quantity=int(new_qty),
+                                    transfer_date=new_date,
+                                    note=new_note,
+                                )
+                                st.success(
+                                    f"Transferência editada com sucesso. Nova transferência #{new_transfer['transfer_id']}."
+                                )
+                                st.rerun()
+                            except Exception as exc:  # noqa: BLE001
+                                st.error(f"Falha ao editar transferência: {exc}")
+
+                with st.expander("Anular transferência", expanded=False):
+                    cancel_reason = st.text_input("Motivo da anulação", key=f"cancel_reason_{selected_transfer_id}")
+                    if st.button("Anular transferência selecionada", key=f"btn_cancel_transfer_{selected_transfer_id}"):
+                        try:
+                            cancel_transfer(selected_transfer_id, cancel_reason=cancel_reason)
+                            st.success("Transferência anulada com sucesso.")
+                            st.rerun()
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"Falha ao anular transferência: {exc}")
+            else:
+                st.info("Esta transferência já está anulada. Se necessário, crie uma nova.")
 
 elif menu == "Lançamentos Lavanderia":
     st.subheader(f"Lançamentos da lavanderia - {UNIT_OPTIONS[selected_unit]}")

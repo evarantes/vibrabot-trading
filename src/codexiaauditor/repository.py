@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from .database import execute, get_connection
+from .database import execute, get_connection, get_db_engine
 
 MOVEMENT_TYPES = {
     "PURCHASE",
@@ -224,6 +224,7 @@ def transfer_central_to_unit(
     laundry_unit_cost: float = 0.0,
     source_ref: str = "",
     note: str = "",
+    revised_from_transfer_id: int | None = None,
 ) -> dict[str, int]:
     target = _normalize_unit(target_unit)
     if target == "CENTRAL":
@@ -292,57 +293,311 @@ def transfer_central_to_unit(
             )
 
         transfer_note = note.strip() or "Transferência do estoque CENTRAL para unidade."
-        execute(
-            conn,
-            """
-            INSERT INTO movements (
-                item_id,
-                operation_unit,
-                movement_type,
-                quantity,
-                movement_date,
-                source_ref,
-                note
+        db_engine = get_db_engine()
+        if db_engine == "postgres":
+            central_move = execute(
+                conn,
+                """
+                INSERT INTO movements (
+                    item_id,
+                    operation_unit,
+                    movement_type,
+                    quantity,
+                    movement_date,
+                    source_ref,
+                    note
+                )
+                VALUES (?, 'CENTRAL', 'STOCK_OUT', ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    central_item_id,
+                    quantity,
+                    movement_date.isoformat(),
+                    source_ref.strip(),
+                    f"{transfer_note} Destino: {target}.",
+                ),
+            ).fetchone()
+            central_movement_id = int(central_move["id"])
+
+            target_move = execute(
+                conn,
+                """
+                INSERT INTO movements (
+                    item_id,
+                    operation_unit,
+                    movement_type,
+                    quantity,
+                    movement_date,
+                    source_ref,
+                    note
+                )
+                VALUES (?, ?, 'STOCK_IN', ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    int(target_item["id"]),
+                    target,
+                    quantity,
+                    movement_date.isoformat(),
+                    source_ref.strip(),
+                    "Transferência recebida do estoque CENTRAL.",
+                ),
+            ).fetchone()
+            target_movement_id = int(target_move["id"])
+
+            transfer_row = execute(
+                conn,
+                """
+                INSERT INTO transfers (
+                    central_item_id,
+                    target_item_id,
+                    target_unit,
+                    quantity,
+                    transfer_date,
+                    source_ref,
+                    note,
+                    status,
+                    central_movement_id,
+                    target_movement_id,
+                    revised_from_transfer_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    central_item_id,
+                    int(target_item["id"]),
+                    target,
+                    quantity,
+                    movement_date.isoformat(),
+                    source_ref.strip(),
+                    transfer_note,
+                    central_movement_id,
+                    target_movement_id,
+                    revised_from_transfer_id,
+                ),
+            ).fetchone()
+            transfer_id = int(transfer_row["id"])
+        else:
+            central_cursor = execute(
+                conn,
+                """
+                INSERT INTO movements (
+                    item_id,
+                    operation_unit,
+                    movement_type,
+                    quantity,
+                    movement_date,
+                    source_ref,
+                    note
+                )
+                VALUES (?, 'CENTRAL', 'STOCK_OUT', ?, ?, ?, ?)
+                """,
+                (
+                    central_item_id,
+                    quantity,
+                    movement_date.isoformat(),
+                    source_ref.strip(),
+                    f"{transfer_note} Destino: {target}.",
+                ),
             )
-            VALUES (?, 'CENTRAL', 'STOCK_OUT', ?, ?, ?, ?)
-            """,
-            (
-                central_item_id,
-                quantity,
-                movement_date.isoformat(),
-                source_ref.strip(),
-                f"{transfer_note} Destino: {target}.",
-            ),
-        )
-        execute(
-            conn,
-            """
-            INSERT INTO movements (
-                item_id,
-                operation_unit,
-                movement_type,
-                quantity,
-                movement_date,
-                source_ref,
-                note
+            central_movement_id = int(central_cursor.lastrowid)
+
+            target_cursor = execute(
+                conn,
+                """
+                INSERT INTO movements (
+                    item_id,
+                    operation_unit,
+                    movement_type,
+                    quantity,
+                    movement_date,
+                    source_ref,
+                    note
+                )
+                VALUES (?, ?, 'STOCK_IN', ?, ?, ?, ?)
+                """,
+                (
+                    int(target_item["id"]),
+                    target,
+                    quantity,
+                    movement_date.isoformat(),
+                    source_ref.strip(),
+                    "Transferência recebida do estoque CENTRAL.",
+                ),
             )
-            VALUES (?, ?, 'STOCK_IN', ?, ?, ?, ?)
-            """,
-            (
-                int(target_item["id"]),
-                target,
-                quantity,
-                movement_date.isoformat(),
-                source_ref.strip(),
-                "Transferência recebida do estoque CENTRAL.",
-            ),
-        )
+            target_movement_id = int(target_cursor.lastrowid)
+
+            transfer_cursor = execute(
+                conn,
+                """
+                INSERT INTO transfers (
+                    central_item_id,
+                    target_item_id,
+                    target_unit,
+                    quantity,
+                    transfer_date,
+                    source_ref,
+                    note,
+                    status,
+                    central_movement_id,
+                    target_movement_id,
+                    revised_from_transfer_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
+                """,
+                (
+                    central_item_id,
+                    int(target_item["id"]),
+                    target,
+                    quantity,
+                    movement_date.isoformat(),
+                    source_ref.strip(),
+                    transfer_note,
+                    central_movement_id,
+                    target_movement_id,
+                    revised_from_transfer_id,
+                ),
+            )
+            transfer_id = int(transfer_cursor.lastrowid)
 
     return {
+        "transfer_id": transfer_id,
         "central_item_id": int(central_item_id),
         "target_item_id": int(target_item["id"]),
         "quantity": int(quantity),
     }
+
+
+def get_transfer_by_id(transfer_id: int) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = execute(
+            conn,
+            """
+            SELECT
+                t.*,
+                ci.name AS central_item_name,
+                ti.name AS target_item_name
+            FROM transfers t
+            JOIN items ci ON ci.id = t.central_item_id
+            JOIN items ti ON ti.id = t.target_item_id
+            WHERE t.id = ?
+            """,
+            (transfer_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_recent_transfers(limit: int = 100) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT
+                t.id,
+                t.transfer_date,
+                t.target_unit,
+                t.quantity,
+                t.source_ref,
+                t.note,
+                t.status,
+                t.cancel_reason,
+                t.cancelled_at,
+                t.created_at,
+                ci.name AS central_item_name,
+                ti.name AS target_item_name
+            FROM transfers t
+            JOIN items ci ON ci.id = t.central_item_id
+            JOIN items ti ON ti.id = t.target_item_id
+            ORDER BY t.transfer_date DESC, t.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def cancel_transfer(transfer_id: int, cancel_reason: str = "") -> None:
+    transfer = get_transfer_by_id(transfer_id)
+    if not transfer:
+        raise ValueError("Transferência não encontrada.")
+    if transfer["status"] != "ACTIVE":
+        raise ValueError("Apenas transferências ativas podem ser anuladas.")
+
+    with get_connection() as conn:
+        execute(
+            conn,
+            """
+            INSERT INTO movements (
+                item_id, operation_unit, movement_type, quantity, movement_date, source_ref, note
+            )
+            VALUES (?, 'CENTRAL', 'STOCK_IN', ?, ?, ?, ?)
+            """,
+            (
+                int(transfer["central_item_id"]),
+                int(transfer["quantity"]),
+                date.today().isoformat(),
+                str(transfer["source_ref"] or "").strip(),
+                f"Anulação transferência #{transfer_id}.",
+            ),
+        )
+        execute(
+            conn,
+            """
+            INSERT INTO movements (
+                item_id, operation_unit, movement_type, quantity, movement_date, source_ref, note
+            )
+            VALUES (?, ?, 'STOCK_OUT', ?, ?, ?, ?)
+            """,
+            (
+                int(transfer["target_item_id"]),
+                str(transfer["target_unit"]),
+                int(transfer["quantity"]),
+                date.today().isoformat(),
+                str(transfer["source_ref"] or "").strip(),
+                f"Anulação transferência #{transfer_id}.",
+            ),
+        )
+        execute(
+            conn,
+            """
+            UPDATE transfers
+            SET
+                status = 'CANCELLED',
+                cancelled_at = CURRENT_TIMESTAMP,
+                cancel_reason = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (cancel_reason.strip(), transfer_id),
+        )
+
+
+def edit_transfer(
+    transfer_id: int,
+    target_unit: str,
+    quantity: int,
+    transfer_date: date,
+    note: str = "",
+) -> dict[str, int]:
+    original = get_transfer_by_id(transfer_id)
+    if not original:
+        raise ValueError("Transferência não encontrada.")
+    if original["status"] != "ACTIVE":
+        raise ValueError("Apenas transferências ativas podem ser editadas.")
+
+    cancel_transfer(transfer_id, cancel_reason="Transferência editada e substituída.")
+    return transfer_central_to_unit(
+        central_item_id=int(original["central_item_id"]),
+        target_unit=target_unit,
+        quantity=quantity,
+        movement_date=transfer_date,
+        laundry_unit_cost=0.0,
+        source_ref=str(original["source_ref"] or "").strip(),
+        note=note or str(original["note"] or ""),
+        revised_from_transfer_id=transfer_id,
+    )
 
 
 def add_movement(

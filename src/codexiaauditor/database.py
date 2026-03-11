@@ -178,6 +178,29 @@ def _init_postgres() -> None:
         execute(
             conn,
             """
+            CREATE TABLE IF NOT EXISTS transfers (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                central_item_id BIGINT NOT NULL REFERENCES items(id),
+                target_item_id BIGINT NOT NULL REFERENCES items(id),
+                target_unit TEXT NOT NULL,
+                quantity INTEGER NOT NULL CHECK(quantity > 0),
+                transfer_date DATE NOT NULL,
+                source_ref TEXT,
+                note TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                central_movement_id BIGINT REFERENCES movements(id),
+                target_movement_id BIGINT REFERENCES movements(id),
+                revised_from_transfer_id BIGINT REFERENCES transfers(id),
+                cancelled_at TIMESTAMPTZ,
+                cancel_reason TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """,
+        )
+        execute(
+            conn,
+            """
             ALTER TABLE movements
             ADD COLUMN IF NOT EXISTS operation_unit TEXT NOT NULL DEFAULT 'HOTEL';
             """,
@@ -277,6 +300,30 @@ def _init_sqlite() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(item_id, count_date, operation_unit),
                 FOREIGN KEY (item_id) REFERENCES items(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS transfers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                central_item_id INTEGER NOT NULL,
+                target_item_id INTEGER NOT NULL,
+                target_unit TEXT NOT NULL,
+                quantity INTEGER NOT NULL CHECK(quantity > 0),
+                transfer_date TEXT NOT NULL,
+                source_ref TEXT,
+                note TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                central_movement_id INTEGER,
+                target_movement_id INTEGER,
+                revised_from_transfer_id INTEGER,
+                cancelled_at TEXT,
+                cancel_reason TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (central_item_id) REFERENCES items(id),
+                FOREIGN KEY (target_item_id) REFERENCES items(id),
+                FOREIGN KEY (central_movement_id) REFERENCES movements(id),
+                FOREIGN KEY (target_movement_id) REFERENCES movements(id),
+                FOREIGN KEY (revised_from_transfer_id) REFERENCES transfers(id)
             );
             """
         )
