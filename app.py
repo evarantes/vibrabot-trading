@@ -531,94 +531,88 @@ elif menu == "Lançamentos Lavanderia":
     if not item_map:
         st.warning("Cadastre pelo menos um item antes de lançar movimentações da lavanderia.")
     else:
-        st.markdown("**Preenchimento em formato de planilha**")
-        sheet_state_key = f"laundry_sheet_rows_{selected_unit}"
+        top1, top2, top3 = st.columns(3)
+        laundry_date = top1.date_input("Data", value=date.today(), key=f"laundry_template_date_{selected_unit}")
+        romaneio = top2.text_input("Romaneio", key=f"laundry_template_romaneio_{selected_unit}")
+        note_general = top3.text_input("Observação geral", key=f"laundry_template_note_{selected_unit}")
+
+        st.markdown("**Planilha de lançamento da lavanderia**")
+        item_names = sorted(item_map.keys())
+        template_rows = [
+            {
+                "ITENS": name,
+                "Coleta": 0,
+                "Entrega": 0,
+                "Env. Relavagem": 0,
+                "Dev. Relavagem": 0,
+            }
+            for name in item_names
+        ]
+        sheet_state_key = f"laundry_template_rows_{selected_unit}"
         if sheet_state_key not in st.session_state:
-            st.session_state[sheet_state_key] = pd.DataFrame(
-                [
-                    {
-                        "lancar": False,
-                        "data": date.today(),
-                        "item": "",
-                        "tipo_movimento": "",
-                        "quantidade": 0,
-                        "referencia": "",
-                        "observacao": "",
-                    }
-                    for _ in range(8)
-                ]
-            )
+            st.session_state[sheet_state_key] = pd.DataFrame(template_rows)
+        else:
+            current_df = st.session_state[sheet_state_key]
+            current_items = current_df["ITENS"].tolist() if "ITENS" in current_df.columns else []
+            if current_items != item_names:
+                st.session_state[sheet_state_key] = pd.DataFrame(template_rows)
 
         laundry_sheet_df = st.data_editor(
             st.session_state[sheet_state_key],
             use_container_width=True,
             hide_index=True,
-            num_rows="dynamic",
-            key=f"laundry_sheet_editor_{selected_unit}",
+            num_rows="fixed",
+            key=f"laundry_template_editor_{selected_unit}",
+            disabled=["ITENS"],
             column_config={
-                "lancar": st.column_config.CheckboxColumn("Lançar"),
-                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                "item": st.column_config.SelectboxColumn("Item", options=sorted(item_map.keys())),
-                "tipo_movimento": st.column_config.SelectboxColumn(
-                    "Tipo de movimento",
-                    options=list(LAUNDRY_LABELS.keys()),
-                ),
-                "quantidade": st.column_config.NumberColumn("Quantidade", min_value=0, step=1),
-                "referencia": st.column_config.TextColumn("Referência"),
-                "observacao": st.column_config.TextColumn("Observação"),
+                "ITENS": st.column_config.TextColumn("ITENS"),
+                "Coleta": st.column_config.NumberColumn("Coleta", min_value=0, step=1),
+                "Entrega": st.column_config.NumberColumn("Entrega", min_value=0, step=1),
+                "Env. Relavagem": st.column_config.NumberColumn("Env. Relavagem", min_value=0, step=1),
+                "Dev. Relavagem": st.column_config.NumberColumn("Dev. Relavagem", min_value=0, step=1),
             },
         )
         st.session_state[sheet_state_key] = laundry_sheet_df
 
-        if st.button("Salvar lançamentos da planilha", key=f"save_laundry_sheet_{selected_unit}"):
-            saved = 0
-            skipped = 0
-            for _, row in laundry_sheet_df.iterrows():
+        if st.button("Salvar romaneio da planilha", key=f"save_laundry_template_{selected_unit}"):
+            def _to_int_non_negative(value: object) -> int:
                 try:
-                    if not bool(row.get("lancar", False)):
-                        continue
-                    item_name = str(row.get("item") or "").strip()
-                    movement_label = str(row.get("tipo_movimento") or "").strip()
-                    quantity = int(float(row.get("quantidade") or 0))
-                    if not item_name or item_name not in item_map or movement_label not in LAUNDRY_LABELS:
-                        skipped += 1
-                        continue
-                    if quantity <= 0:
-                        skipped += 1
-                        continue
+                    n = int(float(value or 0))
+                    return max(n, 0)
+                except Exception:  # noqa: BLE001
+                    return 0
 
-                    movement_date = _parse_date_br(row.get("data"))
+            movements_saved = 0
+            for _, row in laundry_sheet_df.iterrows():
+                item_name = str(row.get("ITENS") or "").strip()
+                if not item_name or item_name not in item_map:
+                    continue
+
+                payload = [
+                    ("LAUNDRY_SENT", _to_int_non_negative(row.get("Coleta"))),
+                    ("LAUNDRY_RETURNED", _to_int_non_negative(row.get("Entrega"))),
+                    ("LAUNDRY_REWASH_SENT", _to_int_non_negative(row.get("Env. Relavagem"))),
+                    ("LAUNDRY_REWASH_RETURNED", _to_int_non_negative(row.get("Dev. Relavagem"))),
+                ]
+                for movement_type, qty in payload:
+                    if qty <= 0:
+                        continue
                     add_movement(
                         item_id=item_map[item_name],
-                        movement_type=LAUNDRY_LABELS[movement_label],
-                        quantity=quantity,
-                        movement_date=movement_date,
+                        movement_type=movement_type,
+                        quantity=qty,
+                        movement_date=laundry_date,
                         operation_unit=selected_unit,
-                        source_ref=str(row.get("referencia") or ""),
-                        note=str(row.get("observacao") or ""),
+                        source_ref=str(romaneio or "").strip(),
+                        note=str(note_general or "").strip(),
                     )
-                    saved += 1
-                except Exception:  # noqa: BLE001
-                    skipped += 1
+                    movements_saved += 1
 
-            if saved > 0:
-                st.success(f"{saved} lançamento(s) da lavanderia salvo(s) com sucesso.")
-                st.session_state[sheet_state_key] = pd.DataFrame(
-                    [
-                        {
-                            "lancar": False,
-                            "data": date.today(),
-                            "item": "",
-                            "tipo_movimento": "",
-                            "quantidade": 0,
-                            "referencia": "",
-                            "observacao": "",
-                        }
-                        for _ in range(8)
-                    ]
-                )
-            if skipped > 0:
-                st.warning(f"{skipped} linha(s) foram ignoradas por estarem incompletas/inválidas.")
+            if movements_saved == 0:
+                st.warning("Nenhum valor lançado. Preencha a planilha e informe quantidades maiores que zero.")
+            else:
+                st.success(f"Romaneio salvo com sucesso. {movements_saved} movimentação(ões) registrada(s).")
+                st.session_state[sheet_state_key] = pd.DataFrame(template_rows)
 
     summary = get_laundry_billing_summary(days=30, ref_date=as_of_date, operation_unit=selected_unit)
     l1, l2, l3, l4 = st.columns(4)
