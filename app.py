@@ -85,6 +85,35 @@ UNIT_STOCK_LABELS = {
 
 
 UNIT_OPTIONS = {"CENTRAL": "Estoque Central", "HOTEL": "Hotel", "CLUB": "Club"}
+UNIT_LABELS = {
+    "CENTRAL": "🏬 Estoque Central",
+    "HOTEL": "🏨 Hotel",
+    "CLUB": "🏖 Club",
+}
+
+MENU_LABELS = {
+    "items": "🏗 Cadastro de Itens (Central)",
+    "stock": "📦 Estoque Central e de Uso",
+    "prices": "💲 Tabela de Preços Lavanderia",
+    "transfer": "🔁 Transferir Central -> Unidade",
+    "laundry": "🧺 Lançamentos Lavanderia",
+    "billing": "🧾 Apuração Lavanderia (Planilha)",
+    "count": "🧮 Contagem Física",
+    "dashboard": "📊 Painel de Controle",
+    "audit": "🤖 Auditoria IA",
+}
+
+MENU_TO_LEGACY = {
+    "items": "Cadastro de Itens (Central)",
+    "stock": "Estoque Central e de Uso",
+    "prices": "Tabela de Preços Lavanderia",
+    "transfer": "Transferir Central -> Unidade",
+    "laundry": "Lançamentos Lavanderia",
+    "billing": "Apuração Lavanderia (Planilha)",
+    "count": "Contagem Física",
+    "dashboard": "Painel de Controle",
+    "audit": "Auditoria IA",
+}
 
 
 def _items_map(operation_unit: str) -> dict[str, int]:
@@ -116,26 +145,50 @@ def _norm_text(value: str) -> str:
     return re.sub(r"\s+", " ", base).strip().upper()
 
 
-st.sidebar.title("Menu")
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f7fafc 0%, #eef3f9 100%);
+    }
+    [data-testid="stSidebar"] .stSelectbox label,
+    [data-testid="stSidebar"] .stDateInput label,
+    [data-testid="stSidebar"] .stRadio > label {
+        font-weight: 700;
+        color: #27364a;
+    }
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label {
+        background: #ffffff;
+        border: 1px solid #d7e2ef;
+        border-radius: 10px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+    }
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover {
+        border-color: #8bb2e0;
+        background: #f8fbff;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown("## Menu")
 selected_unit = st.sidebar.selectbox(
     "Unidade para auditoria",
     options=list(UNIT_OPTIONS.keys()),
-    format_func=lambda x: UNIT_OPTIONS[x],
+    format_func=lambda x: UNIT_LABELS[x],
 )
 as_of_date = st.sidebar.date_input("Dados de referência de auditoria", value=date.today())
-menu = st.sidebar.radio(
+menu_key = st.sidebar.radio(
     "Módulos",
-    options=[
-        "Cadastro de Itens (Central)",
-        "Estoque Central e de Uso",
-        "Tabela de Preços Lavanderia",
-        "Transferir Central -> Unidade",
-        "Lançamentos Lavanderia",
-        "Apuração Lavanderia (Planilha)",
-        "Contagem Física",
-        "Painel de Controle",
-        "Auditoria IA",
-    ],
+    options=list(MENU_LABELS.keys()),
+    format_func=lambda x: MENU_LABELS[x],
+)
+menu = MENU_TO_LEGACY[menu_key]
+st.sidebar.caption(
+    f"Unidade ativa: **{UNIT_OPTIONS[selected_unit]}**\n\n"
+    f"Módulo ativo: **{MENU_LABELS[menu_key]}**"
 )
 st.sidebar.info("Dica: registre movimentos diariamente e faça contagem física no fechamento.")
 
