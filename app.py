@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
 import unicodedata
@@ -148,6 +148,62 @@ def _norm_text(value: str) -> str:
 def _format_brl(value: float | int) -> str:
     numeric = float(value or 0.0)
     return f"R$ {numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _format_decimal_br(value: float | int) -> str:
+    numeric = float(value or 0.0)
+    return f"{numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _parse_decimal_br(value: object) -> float:
+    if value is None:
+        return 0.0
+    raw = str(value).strip()
+    if not raw:
+        return 0.0
+    normalized = raw.replace("R$", "").replace(" ", "")
+    if "," in normalized and "." in normalized:
+        normalized = normalized.replace(".", "").replace(",", ".")
+    else:
+        normalized = normalized.replace(",", ".")
+    try:
+        return max(float(normalized), 0.0)
+    except ValueError:
+        raise ValueError(f"Valor inválido: {value}. Use formato 0,00.")
+
+
+def _format_date_br(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    try:
+        return date.fromisoformat(raw).strftime("%d/%m/%Y")
+    except ValueError:
+        pass
+    for fmt in ("%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%d/%m/%Y")
+        except Exception:  # noqa: BLE001
+            continue
+    return raw
+
+
+def _parse_date_br(value: object) -> date:
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("Data vazia. Use DD/MM/AAAA.")
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Data inválida: {value}. Use DD/MM/AAAA.")
 
 
 st.markdown(
@@ -843,61 +899,85 @@ elif menu == "Tabela de Preços Lavanderia":
     if price_df.empty:
         st.info("Sem itens para exibir na tabela de preços.")
     else:
-        show_df = price_df.rename(
-            columns={
-                "operation_unit": "unidade",
-                "item_name": "item",
-                "category": "categoria",
-                "current_unit_price": "tarifa_unitaria_atual",
-                "effective_from": "vigencia_tarifa_atual",
-                "active": "ativo",
+        batch1, batch2, batch3, batch4 = st.columns(4)
+        batch_rate = batch1.text_input("Nova tarifa para todos (0,00)", value="0,00")
+        batch_date = batch2.date_input("Vigência global (DD/MM/AAAA)", value=ref_rate_date, key="batch_rate_date")
+        batch_note = batch3.text_input("Observação global")
+        apply_all = batch4.button("Aplicar a todos os itens filtrados")
+        if apply_all:
+            try:
+                parsed_rate = _parse_decimal_br(batch_rate)
+                for _, row in price_df.iterrows():
+                    upsert_laundry_rate(
+                        item_id=int(row["item_id"]),
+                        effective_from=batch_date,
+                        unit_price=parsed_rate,
+                        note=batch_note,
+                    )
+                st.success("Tarifa global aplicada para todos os itens filtrados.")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Falha ao aplicar tarifa global: {exc}")
+
+        edit_df = pd.DataFrame(
+            {
+                "unidade": price_df["operation_unit"],
+                "item": price_df["item_name"],
+                "categoria": price_df["category"],
+                "tarifa_atual (0,00)": price_df["current_unit_price"].apply(_format_decimal_br),
+                "vigencia_atual (DD/MM/AAAA)": price_df["effective_from"].apply(_format_date_br),
+                "nova_tarifa (0,00)": price_df["current_unit_price"].apply(_format_decimal_br),
+                "nova_vigencia (DD/MM/AAAA)": [ref_rate_date.strftime("%d/%m/%Y")] * len(price_df),
+                "aplicar": [False] * len(price_df),
             }
         )
-        st.dataframe(
-            show_df[
-                [
-                    "unidade",
-                    "item",
-                    "categoria",
-                    "tarifa_unitaria_atual",
-                    "vigencia_tarifa_atual",
-                    "ativo",
-                ]
-            ],
+        st.markdown("**Tabela editável de tarifas por item**")
+        edited_df = st.data_editor(
+            edit_df,
             use_container_width=True,
             hide_index=True,
+            key="laundry_rate_editor",
+            disabled=["unidade", "item", "categoria", "tarifa_atual (0,00)", "vigencia_atual (DD/MM/AAAA)"],
+            column_config={
+                "nova_tarifa (0,00)": st.column_config.TextColumn(help="Ex: 3,50"),
+                "nova_vigencia (DD/MM/AAAA)": st.column_config.TextColumn(help="Ex: 16/03/2026"),
+                "aplicar": st.column_config.CheckboxColumn(help="Marque para salvar a nova tarifa deste item"),
+            },
         )
+
+        if st.button("Salvar alterações da planilha de tarifas"):
+            try:
+                changed = 0
+                for idx, row in edited_df.iterrows():
+                    if not bool(row.get("aplicar", False)):
+                        continue
+                    item_id = int(price_df.iloc[idx]["item_id"])
+                    parsed_rate = _parse_decimal_br(row.get("nova_tarifa (0,00)", "0,00"))
+                    parsed_date = _parse_date_br(row.get("nova_vigencia (DD/MM/AAAA)", ""))
+                    upsert_laundry_rate(
+                        item_id=item_id,
+                        effective_from=parsed_date,
+                        unit_price=parsed_rate,
+                        note="Atualizado via planilha de tarifas.",
+                    )
+                    changed += 1
+                if changed == 0:
+                    st.warning("Nenhum item marcado para aplicar.")
+                else:
+                    st.success(f"Tarifa atualizada para {changed} item(ns).")
+                    st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Falha ao salvar alterações da planilha: {exc}")
 
         options = []
         item_index: dict[str, int] = {}
         for _, row in price_df.iterrows():
             label = (
                 f"{row['operation_unit']} | {row['item_name']} | "
-                f"tarifa atual: R$ {float(row['current_unit_price']):.2f}"
+                f"tarifa atual: {_format_decimal_br(float(row['current_unit_price']))}"
             )
             options.append(label)
             item_index[label] = int(row["item_id"])
-
-        with st.form("form-upsert-laundry-rate", clear_on_submit=True):
-            r1, r2, r3, r4 = st.columns(4)
-            selected_rate_label = r1.selectbox("Item para nova tarifa", options=options)
-            new_rate = r2.number_input("Nova tarifa unitária (R$)", min_value=0.0, step=0.01, value=0.0)
-            effective_from = r3.date_input("Vigência a partir de", value=date.today(), key="new_rate_effective_from")
-            rate_note = r4.text_input("Observação")
-            save_rate = st.form_submit_button("Salvar nova tarifa")
-            if save_rate:
-                try:
-                    item_id = item_index[selected_rate_label]
-                    upsert_laundry_rate(
-                        item_id=item_id,
-                        effective_from=effective_from,
-                        unit_price=float(new_rate),
-                        note=rate_note,
-                    )
-                    st.success("Tarifa registrada com sucesso.")
-                    st.rerun()
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Falha ao registrar tarifa: {exc}")
 
         selected_hist_label = st.selectbox("Histórico de tarifas por item", options=options, key="rate_history_select")
         hist_item_id = item_index[selected_hist_label]
@@ -905,15 +985,18 @@ elif menu == "Tabela de Preços Lavanderia":
         if hist_df.empty:
             st.info("Este item ainda não possui histórico de tarifas.")
         else:
+            hist_df = hist_df.rename(
+                columns={
+                    "effective_from": "vigencia_desde",
+                    "unit_price": "tarifa_unitaria",
+                    "note": "observacao",
+                    "created_at": "criado_em",
+                }
+            )
+            hist_df["vigencia_desde"] = hist_df["vigencia_desde"].apply(_format_date_br)
+            hist_df["tarifa_unitaria"] = hist_df["tarifa_unitaria"].apply(_format_decimal_br)
             st.dataframe(
-                hist_df.rename(
-                    columns={
-                        "effective_from": "vigencia_desde",
-                        "unit_price": "tarifa_unitaria",
-                        "note": "observacao",
-                        "created_at": "criado_em",
-                    }
-                )[["vigencia_desde", "tarifa_unitaria", "observacao", "criado_em"]],
+                hist_df[["vigencia_desde", "tarifa_unitaria", "observacao", "criado_em"]],
                 use_container_width=True,
                 hide_index=True,
             )

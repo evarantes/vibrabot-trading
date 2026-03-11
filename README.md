@@ -63,6 +63,9 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
 10. **Tabela de preços da lavanderia por item**
    - exibe todos os itens cadastrados (por unidade),
    - permite cadastrar tarifa unitária com data de vigência,
+   - aplicação em massa de nova tarifa/data para todos os itens filtrados,
+   - edição diretamente na planilha por item (incluindo data de vigência diferente),
+   - formato visual de tarifa `0,00` e data `DD/MM/AAAA`,
    - suporta reajuste no meio da quinzena/mês por item,
    - histórico de tarifas por item.
 
