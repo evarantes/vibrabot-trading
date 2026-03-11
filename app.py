@@ -757,24 +757,26 @@ elif menu == "Lançamentos Lavanderia":
             if current_items != item_names:
                 st.session_state[sheet_state_key] = pd.DataFrame(template_rows)
 
-        laundry_sheet_df = st.data_editor(
-            st.session_state[sheet_state_key],
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            key=f"laundry_template_editor_{selected_unit}",
-            disabled=["ITENS"],
-            column_config={
-                "ITENS": st.column_config.TextColumn("ITENS"),
-                "Coleta": st.column_config.NumberColumn("Coleta", min_value=0, step=1),
-                "Entrega": st.column_config.NumberColumn("Entrega", min_value=0, step=1),
-                "Env. Relavagem": st.column_config.NumberColumn("Env. Relavagem", min_value=0, step=1),
-                "Dev. Relavagem": st.column_config.NumberColumn("Dev. Relavagem", min_value=0, step=1),
-            },
-        )
+        with st.form(f"form_laundry_template_{selected_unit}", clear_on_submit=False):
+            laundry_sheet_df = st.data_editor(
+                st.session_state[sheet_state_key],
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                key=f"laundry_template_editor_{selected_unit}",
+                disabled=["ITENS"],
+                column_config={
+                    "ITENS": st.column_config.TextColumn("ITENS"),
+                    "Coleta": st.column_config.NumberColumn("Coleta", min_value=0, step=1),
+                    "Entrega": st.column_config.NumberColumn("Entrega", min_value=0, step=1),
+                    "Env. Relavagem": st.column_config.NumberColumn("Env. Relavagem", min_value=0, step=1),
+                    "Dev. Relavagem": st.column_config.NumberColumn("Dev. Relavagem", min_value=0, step=1),
+                },
+            )
+            save_template_submit = st.form_submit_button("Salvar romaneio da planilha")
         st.session_state[sheet_state_key] = laundry_sheet_df
 
-        if st.button("Salvar romaneio da planilha", key=f"save_laundry_template_{selected_unit}"):
+        if save_template_submit:
             def _to_int_non_negative(value: object) -> int:
                 try:
                     n = int(float(value or 0))
@@ -1190,20 +1192,22 @@ elif menu == "Tabela de Preços Lavanderia":
             }
         )
         st.markdown("**Tabela editável de tarifas por item**")
-        edited_df = st.data_editor(
-            edit_df,
-            use_container_width=True,
-            hide_index=True,
-            key="laundry_rate_editor",
-            disabled=["unidade", "item", "categoria", "tarifa_atual (0,00)", "vigencia_atual (DD/MM/AAAA)"],
-            column_config={
-                "nova_tarifa (0,00)": st.column_config.TextColumn(help="Ex: 3,50"),
-                "nova_vigencia (DD/MM/AAAA)": st.column_config.TextColumn(help="Ex: 16/03/2026"),
-                "aplicar": st.column_config.CheckboxColumn(help="Marque para salvar a nova tarifa deste item"),
-            },
-        )
+        with st.form("form_laundry_rate_editor", clear_on_submit=False):
+            edited_df = st.data_editor(
+                edit_df,
+                use_container_width=True,
+                hide_index=True,
+                key="laundry_rate_editor",
+                disabled=["unidade", "item", "categoria", "tarifa_atual (0,00)", "vigencia_atual (DD/MM/AAAA)"],
+                column_config={
+                    "nova_tarifa (0,00)": st.column_config.TextColumn(help="Ex: 3,50"),
+                    "nova_vigencia (DD/MM/AAAA)": st.column_config.TextColumn(help="Ex: 16/03/2026"),
+                    "aplicar": st.column_config.CheckboxColumn(help="Marque para salvar a nova tarifa deste item"),
+                },
+            )
+            save_rate_sheet_submit = st.form_submit_button("Salvar alterações da planilha de tarifas")
 
-        if st.button("Salvar alterações da planilha de tarifas"):
+        if save_rate_sheet_submit:
             try:
                 changed = 0
                 for idx, row in edited_df.iterrows():
