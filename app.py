@@ -502,8 +502,8 @@ elif menu == "Lançamentos Lavanderia":
 
     summary = get_laundry_billing_summary(days=30, ref_date=as_of_date, operation_unit=selected_unit)
     l1, l2, l3, l4 = st.columns(4)
-    l1.metric("Lavagens enviadas (cobradas - 30d)", int(summary["billed_sent"]))
-    l2.metric("Retornos cobrados (30d)", int(summary["billed_returned"]))
+    l1.metric("Peças enviadas (30d)", int(summary["billed_sent"]))
+    l2.metric("Peças entregues/cobradas (30d)", int(summary.get("charged_qty", summary["billed_returned"])))
     l3.metric("Relavagens enviadas sem cobrança (30d)", int(summary["rewash_sent"]))
     l4.metric("Retornos de relavagem (30d)", int(summary["rewash_returned"]))
 
@@ -1127,7 +1127,7 @@ elif menu == "Painel de Controle":
         summary = get_laundry_billing_summary(days=30, ref_date=as_of_date, operation_unit=selected_unit)
         st.markdown("**Resumo de lavanderia (30 dias)**")
         s1, s2 = st.columns(2)
-        s1.metric("Lavagem cobrada enviada", int(summary["billed_sent"]))
+        s1.metric("Lavagem cobrada entregue", int(summary.get("charged_qty", summary["billed_returned"])))
         s2.metric("Relavagem sem cobrança enviada", int(summary["rewash_sent"]))
 
 elif menu == "Auditoria IA":
@@ -1141,7 +1141,10 @@ elif menu == "Auditoria IA":
     f2.metric("Itens com alerta", report["items_with_alert"])
 
     l1, l2 = st.columns(2)
-    l1.metric("Lavagens cobradas enviadas (30d)", int(report["laundry_summary_30d"]["billed_sent"]))
+    l1.metric(
+        "Lavagens cobradas entregues (30d)",
+        int(report["laundry_summary_30d"].get("charged_qty", report["laundry_summary_30d"]["billed_returned"])),
+    )
     l2.metric("Relavagens sem cobrança enviadas (30d)", int(report["laundry_summary_30d"]["rewash_sent"]))
 
     findings_df = pd.DataFrame(report["findings"])

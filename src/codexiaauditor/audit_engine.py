@@ -207,10 +207,10 @@ def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> di
             )
             risk_by_item[item_id] += 20 if delta >= 5 else 12
 
-    billed_sent = laundry_summary_30d["billed_sent"]
+    charged_qty = laundry_summary_30d.get("charged_qty", laundry_summary_30d.get("billed_returned", 0))
     rewash_sent = laundry_summary_30d["rewash_sent"]
-    if billed_sent >= 20 and rewash_sent > 0:
-        rewash_ratio = rewash_sent / billed_sent
+    if charged_qty >= 20 and rewash_sent > 0:
+        rewash_ratio = rewash_sent / charged_qty
         if rewash_ratio >= 0.1:
             score = 15 if rewash_ratio >= 0.2 else 9
             findings.append(
@@ -220,7 +220,7 @@ def generate_audit_report(as_of_date: date, operation_unit: str = "HOTEL") -> di
                     "area": "qualidade_lavanderia",
                     "descricao": (
                         f"Taxa de relavagem elevada nos últimos 30 dias: "
-                        f"{rewash_sent}/{billed_sent} ({rewash_ratio:.1%})."
+                        f"{rewash_sent}/{charged_qty} ({rewash_ratio:.1%}) sobre peças entregues."
                     ),
                     "acao": "Negociar qualidade com a lavanderia e auditar lotes com recorrência de relavagem.",
                     "risco_pontos": score,

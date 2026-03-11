@@ -137,6 +137,8 @@ def test_apuracao_planilha_por_periodo(tmp_path):
 
     add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 1), operation_unit="HOTEL")
     add_movement(item_id, "LAUNDRY_SENT", 12, date(2026, 3, 2), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_RETURNED", 10, date(2026, 3, 3), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_RETURNED", 12, date(2026, 3, 4), operation_unit="HOTEL")
     add_movement(item_id, "LAUNDRY_REWASH_SENT", 3, date(2026, 3, 2), operation_unit="HOTEL")
     add_movement(item_id, "LAUNDRY_REWASH_RETURNED", 2, date(2026, 3, 3), operation_unit="HOTEL")
     add_movement(item_id, "LOSS", 1, date(2026, 3, 4), operation_unit="HOTEL")
@@ -303,8 +305,8 @@ def test_tarifa_lavanderia_com_vigencia_no_periodo(tmp_path):
 
     upsert_laundry_rate(item_id=item_id, effective_from=date(2026, 3, 1), unit_price=2.0)
     upsert_laundry_rate(item_id=item_id, effective_from=date(2026, 3, 16), unit_price=3.0)
-    add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 10), operation_unit="HOTEL")
-    add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 20), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_RETURNED", 10, date(2026, 3, 10), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_RETURNED", 10, date(2026, 3, 20), operation_unit="HOTEL")
 
     report = get_laundry_period_item_report(
         start_date=date(2026, 3, 1),

@@ -1222,10 +1222,17 @@ def get_laundry_billing_summary(
         ).fetchone()
 
     if row is None:
-        return {"billed_sent": 0, "billed_returned": 0, "rewash_sent": 0, "rewash_returned": 0}
+        return {
+            "billed_sent": 0,
+            "billed_returned": 0,
+            "charged_qty": 0,
+            "rewash_sent": 0,
+            "rewash_returned": 0,
+        }
     return {
         "billed_sent": int(row["billed_sent"] or 0),
         "billed_returned": int(row["billed_returned"] or 0),
+        "charged_qty": int(row["billed_returned"] or 0),
         "rewash_sent": int(row["rewash_sent"] or 0),
         "rewash_returned": int(row["rewash_returned"] or 0),
     }
@@ -1246,7 +1253,7 @@ def get_laundry_period_item_report(
                 i.name,
                 i.laundry_unit_cost,
                 m.movement_date,
-                SUM(CASE WHEN m.movement_type = 'LAUNDRY_SENT' THEN m.quantity ELSE 0 END) AS billed_qty,
+                SUM(CASE WHEN m.movement_type = 'LAUNDRY_RETURNED' THEN m.quantity ELSE 0 END) AS billed_qty,
                 SUM(CASE WHEN m.movement_type = 'LAUNDRY_REWASH_SENT' THEN m.quantity ELSE 0 END) AS rewash_sent_qty,
                 SUM(CASE WHEN m.movement_type = 'LAUNDRY_REWASH_RETURNED' THEN m.quantity ELSE 0 END) AS rewash_returned_qty,
                 SUM(CASE WHEN m.movement_type = 'LOSS' THEN m.quantity ELSE 0 END) AS loss_qty
