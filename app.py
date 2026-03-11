@@ -981,13 +981,13 @@ elif menu == "Apuração Lavanderia (Planilha)":
 
         display_sheet_df = sheet_df.rename(
             columns={
-                "VALOR UNIT": "VALOR UNITÁRIO (R$/PEÇA)",
-                "VALOR TOTAL": "VALOR MONETÁRIO TOTAL (R$)",
+                "VALOR UNIT": "valor p/ unid.",
+                "VALOR TOTAL": "Valor Total",
                 "TOTAL": "TOTAL PEÇAS",
             }
         ).copy()
-        display_sheet_df["VALOR UNITÁRIO (R$/PEÇA)"] = display_sheet_df["VALOR UNITÁRIO (R$/PEÇA)"].apply(_format_brl)
-        display_sheet_df["VALOR MONETÁRIO TOTAL (R$)"] = display_sheet_df["VALOR MONETÁRIO TOTAL (R$)"].apply(_format_brl)
+        display_sheet_df["valor p/ unid."] = display_sheet_df["valor p/ unid."].apply(_format_brl)
+        display_sheet_df["Valor Total"] = display_sheet_df["Valor Total"].apply(_format_brl)
 
         st.dataframe(display_sheet_df, use_container_width=True, hide_index=True)
 
