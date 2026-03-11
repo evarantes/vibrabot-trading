@@ -60,6 +60,11 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - histórico de transferências com edição e anulação,
    - preços de lavagem independentes por unidade,
    - idas/voltas da lavanderia, relave e perdas independentes por unidade.
+10. **Tabela de preços da lavanderia por item**
+   - exibe todos os itens cadastrados (por unidade),
+   - permite cadastrar tarifa unitária com data de vigência,
+   - suporta reajuste no meio da quinzena/mês por item,
+   - histórico de tarifas por item.
 
 ---
 

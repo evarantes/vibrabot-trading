@@ -40,6 +40,22 @@ def _to_date(raw_value: Any) -> date:
     return date.fromisoformat(str(raw_value))
 
 
+def _resolve_rate_for_date(
+    rates: list[dict[str, Any]],
+    ref_date: date,
+    fallback_price: float,
+) -> tuple[float, date | None]:
+    matched_price = float(fallback_price)
+    matched_from: date | None = None
+    for rate in rates:
+        eff_raw = rate["effective_from"]
+        eff = _to_date(eff_raw)
+        if eff <= ref_date and (matched_from is None or eff >= matched_from):
+            matched_from = eff
+            matched_price = float(rate["unit_price"] or 0.0)
+    return matched_price, matched_from
+
+
 def add_item(
     name: str,
     category: str,
@@ -89,6 +105,69 @@ def list_categories(active_only: bool = True) -> list[dict[str, Any]]:
 
     with get_connection() as conn:
         rows = execute(conn, query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_laundry_rate(
+    item_id: int,
+    effective_from: date,
+    unit_price: float,
+    note: str = "",
+) -> None:
+    clean_price = max(float(unit_price), 0.0)
+    with get_connection() as conn:
+        item_row = execute(
+            conn,
+            "SELECT id FROM items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if item_row is None:
+            raise ValueError("Item não encontrado para registrar tarifa.")
+
+        updated = execute(
+            conn,
+            """
+            UPDATE laundry_rates
+            SET unit_price = ?, note = ?
+            WHERE item_id = ?
+              AND effective_from = ?
+            """,
+            (clean_price, note.strip(), item_id, effective_from.isoformat()),
+        )
+        if updated.rowcount == 0:
+            execute(
+                conn,
+                """
+                INSERT INTO laundry_rates (item_id, effective_from, unit_price, note)
+                VALUES (?, ?, ?, ?)
+                """,
+                (item_id, effective_from.isoformat(), clean_price, note.strip()),
+            )
+
+        # Mantém compatibilidade com campos legados de custo atual do item.
+        execute(
+            conn,
+            """
+            UPDATE items
+            SET laundry_unit_cost = ?
+            WHERE id = ?
+            """,
+            (clean_price, item_id),
+        )
+
+
+def list_item_laundry_rates(item_id: int) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT id, item_id, effective_from, unit_price, note, created_at
+            FROM laundry_rates
+            WHERE item_id = ?
+            ORDER BY effective_from DESC, id DESC
+            """,
+            (item_id,),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -166,6 +245,42 @@ def list_items(operation_unit: str = "HOTEL", active_only: bool = True) -> list[
     with get_connection() as conn:
         rows = execute(conn, query, params).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_laundry_price_for_item_on_date(item_id: int, ref_date: date) -> tuple[float, date | None]:
+    item = get_item_by_id(item_id)
+    if not item:
+        return 0.0, None
+    rates = list_item_laundry_rates(item_id)
+    return _resolve_rate_for_date(rates, ref_date, float(item.get("laundry_unit_cost") or 0.0))
+
+
+def list_laundry_price_table(
+    operation_unit: str | None = None,
+    ref_date: date | None = None,
+    active_only: bool = True,
+) -> list[dict[str, Any]]:
+    use_date = ref_date or date.today()
+    units = [operation_unit] if operation_unit else ["CENTRAL", "HOTEL", "CLUB"]
+    rows: list[dict[str, Any]] = []
+    for unit in units:
+        normalized = _normalize_unit(unit)
+        for item in list_items(operation_unit=normalized, active_only=active_only):
+            price, eff_from = get_laundry_price_for_item_on_date(int(item["id"]), use_date)
+            rows.append(
+                {
+                    "item_id": int(item["id"]),
+                    "item_name": item["name"],
+                    "operation_unit": normalized,
+                    "category": item["category"],
+                    "active": bool(item["active"]),
+                    "current_unit_price": round(float(price), 2),
+                    "effective_from": eff_from.isoformat() if eff_from else "",
+                    "fallback_unit_price": float(item.get("laundry_unit_cost") or 0.0),
+                }
+            )
+    rows.sort(key=lambda x: (x["operation_unit"], str(x["item_name"])))
+    return rows
 
 
 def get_item_theoretical_stock(
@@ -291,6 +406,38 @@ def transfer_central_to_unit(
                 """,
                 (max(float(laundry_unit_cost), 0.0), int(target_item["id"])),
             )
+
+        if laundry_unit_cost > 0:
+            effective_value = max(float(laundry_unit_cost), 0.0)
+            updated_rate = execute(
+                conn,
+                """
+                UPDATE laundry_rates
+                SET unit_price = ?, note = ?
+                WHERE item_id = ?
+                  AND effective_from = ?
+                """,
+                (
+                    effective_value,
+                    "Tarifa definida na transferência do central.",
+                    int(target_item["id"]),
+                    movement_date.isoformat(),
+                ),
+            )
+            if updated_rate.rowcount == 0:
+                execute(
+                    conn,
+                    """
+                    INSERT INTO laundry_rates (item_id, effective_from, unit_price, note)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        int(target_item["id"]),
+                        movement_date.isoformat(),
+                        effective_value,
+                        "Tarifa definida na transferência do central.",
+                    ),
+                )
 
         transfer_note = note.strip() or "Transferência do estoque CENTRAL para unidade."
         db_engine = get_db_engine()
@@ -1116,15 +1263,29 @@ def get_laundry_period_item_report(
             (unit, start_date.isoformat(), end_date.isoformat(), unit),
         ).fetchall()
 
+    item_fallback_cost: dict[int, float] = {}
+    for row in rows:
+        item_fallback_cost[int(row["item_id"])] = float(row["laundry_unit_cost"] or 0.0)
+
+    rate_history_by_item: dict[int, list[dict[str, Any]]] = {
+        item_id: list_item_laundry_rates(item_id) for item_id in item_fallback_cost
+    }
+
     report_map: dict[int, dict[str, Any]] = {}
     for row in rows:
         item_id = int(row["item_id"])
+        current_rate, current_effective_from = _resolve_rate_for_date(
+            rate_history_by_item.get(item_id, []),
+            end_date,
+            item_fallback_cost.get(item_id, 0.0),
+        )
         current = report_map.setdefault(
             item_id,
             {
                 "item_id": item_id,
                 "name": row["name"],
-                "laundry_unit_cost": float(row["laundry_unit_cost"] or 0.0),
+                "laundry_unit_cost": float(current_rate),
+                "laundry_rate_effective_from": current_effective_from.isoformat() if current_effective_from else "",
                 "daily_billed_qty": {},
                 "total_billed_qty": 0,
                 "total_billed_value": 0.0,
@@ -1143,6 +1304,12 @@ def get_laundry_period_item_report(
         if raw_dt is not None:
             dt = _to_date(raw_dt)
             current["daily_billed_qty"][dt] = current["daily_billed_qty"].get(dt, 0) + billed_qty
+            rate_at_day, _ = _resolve_rate_for_date(
+                rate_history_by_item.get(item_id, []),
+                dt,
+                item_fallback_cost.get(item_id, 0.0),
+            )
+            current["total_billed_value"] += float(billed_qty) * float(rate_at_day)
 
         current["total_billed_qty"] += billed_qty
         current["rewash_sent_qty"] += rewash_sent_qty
@@ -1150,7 +1317,7 @@ def get_laundry_period_item_report(
         current["loss_qty"] += loss_qty
 
     for item in report_map.values():
-        item["total_billed_value"] = round(item["total_billed_qty"] * item["laundry_unit_cost"], 2)
+        item["total_billed_value"] = round(float(item["total_billed_value"]), 2)
 
     return list(report_map.values())
 

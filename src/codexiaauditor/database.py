@@ -103,6 +103,20 @@ def _init_postgres() -> None:
         execute(
             conn,
             """
+            CREATE TABLE IF NOT EXISTS laundry_rates (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                item_id BIGINT NOT NULL REFERENCES items(id),
+                effective_from DATE NOT NULL,
+                unit_price NUMERIC(12,2) NOT NULL CHECK(unit_price >= 0),
+                note TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(item_id, effective_from)
+            );
+            """,
+        )
+        execute(
+            conn,
+            """
             ALTER TABLE items
             ADD COLUMN IF NOT EXISTS operation_unit TEXT NOT NULL DEFAULT 'HOTEL';
             """,
@@ -271,6 +285,17 @@ def _init_sqlite() -> None:
                 laundry_unit_cost REAL NOT NULL DEFAULT 0,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS laundry_rates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                effective_from TEXT NOT NULL,
+                unit_price REAL NOT NULL CHECK(unit_price >= 0),
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(item_id, effective_from),
+                FOREIGN KEY (item_id) REFERENCES items(id)
             );
 
             CREATE TABLE IF NOT EXISTS movements (

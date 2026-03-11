@@ -33,12 +33,15 @@ from codexiaauditor.repository import (
     get_laundry_billing_summary,
     get_laundry_period_item_report,
     get_transfer_by_id,
+    list_item_laundry_rates,
+    list_laundry_price_table,
     list_categories,
     list_items,
     list_recent_movements,
     list_recent_transfers,
     set_item_active,
     transfer_central_to_unit,
+    upsert_laundry_rate,
     update_item,
     upsert_inventory_count,
 )
@@ -125,6 +128,7 @@ menu = st.sidebar.radio(
     options=[
         "Cadastro de Itens (Central)",
         "Estoque Central e de Uso",
+        "Tabela de Preços Lavanderia",
         "Transferir Central -> Unidade",
         "Lançamentos Lavanderia",
         "Apuração Lavanderia (Planilha)",
@@ -757,6 +761,101 @@ elif menu == "Estoque Central e de Uso":
                         "note": "observacao",
                     }
                 ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+elif menu == "Tabela de Preços Lavanderia":
+    st.subheader("Tabela de preços de lavanderia por item")
+    st.caption(
+        "Defina tarifa unitária por item com data de vigência. "
+        "Se houver reajuste no meio da quinzena/mês, cadastre nova tarifa com nova data."
+    )
+
+    scope_col1, scope_col2 = st.columns(2)
+    scope_unit = scope_col1.selectbox(
+        "Escopo da tabela",
+        options=["TODAS", "HOTEL", "CLUB", "CENTRAL"],
+    )
+    ref_rate_date = scope_col2.date_input("Tarifa vigente em", value=as_of_date, key="laundry_rate_ref_date")
+
+    unit_param = None if scope_unit == "TODAS" else scope_unit
+    price_rows = list_laundry_price_table(operation_unit=unit_param, ref_date=ref_rate_date, active_only=False)
+    price_df = pd.DataFrame(price_rows)
+    if price_df.empty:
+        st.info("Sem itens para exibir na tabela de preços.")
+    else:
+        show_df = price_df.rename(
+            columns={
+                "operation_unit": "unidade",
+                "item_name": "item",
+                "category": "categoria",
+                "current_unit_price": "tarifa_unitaria_atual",
+                "effective_from": "vigencia_tarifa_atual",
+                "active": "ativo",
+            }
+        )
+        st.dataframe(
+            show_df[
+                [
+                    "unidade",
+                    "item",
+                    "categoria",
+                    "tarifa_unitaria_atual",
+                    "vigencia_tarifa_atual",
+                    "ativo",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        options = []
+        item_index: dict[str, int] = {}
+        for _, row in price_df.iterrows():
+            label = (
+                f"{row['operation_unit']} | {row['item_name']} | "
+                f"tarifa atual: R$ {float(row['current_unit_price']):.2f}"
+            )
+            options.append(label)
+            item_index[label] = int(row["item_id"])
+
+        with st.form("form-upsert-laundry-rate", clear_on_submit=True):
+            r1, r2, r3, r4 = st.columns(4)
+            selected_rate_label = r1.selectbox("Item para nova tarifa", options=options)
+            new_rate = r2.number_input("Nova tarifa unitária (R$)", min_value=0.0, step=0.01, value=0.0)
+            effective_from = r3.date_input("Vigência a partir de", value=date.today(), key="new_rate_effective_from")
+            rate_note = r4.text_input("Observação")
+            save_rate = st.form_submit_button("Salvar nova tarifa")
+            if save_rate:
+                try:
+                    item_id = item_index[selected_rate_label]
+                    upsert_laundry_rate(
+                        item_id=item_id,
+                        effective_from=effective_from,
+                        unit_price=float(new_rate),
+                        note=rate_note,
+                    )
+                    st.success("Tarifa registrada com sucesso.")
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Falha ao registrar tarifa: {exc}")
+
+        selected_hist_label = st.selectbox("Histórico de tarifas por item", options=options, key="rate_history_select")
+        hist_item_id = item_index[selected_hist_label]
+        hist_df = pd.DataFrame(list_item_laundry_rates(hist_item_id))
+        if hist_df.empty:
+            st.info("Este item ainda não possui histórico de tarifas.")
+        else:
+            st.dataframe(
+                hist_df.rename(
+                    columns={
+                        "effective_from": "vigencia_desde",
+                        "unit_price": "tarifa_unitaria",
+                        "note": "observacao",
+                        "created_at": "criado_em",
+                    }
+                )[["vigencia_desde", "tarifa_unitaria", "observacao", "criado_em"]],
                 use_container_width=True,
                 hide_index=True,
             )

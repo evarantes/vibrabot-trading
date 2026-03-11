@@ -13,12 +13,15 @@ from codexiaauditor.repository import (
     get_balances,
     get_laundry_billing_summary,
     get_laundry_period_item_report,
+    get_laundry_price_for_item_on_date,
     get_item_theoretical_stock,
     list_recent_transfers,
+    list_laundry_price_table,
     list_categories,
     list_items,
     set_item_active,
     transfer_central_to_unit,
+    upsert_laundry_rate,
     upsert_inventory_count,
 )
 
@@ -291,3 +294,38 @@ def test_transferencia_com_historico_edicao_e_anulacao(tmp_path):
 
     assert any(int(row["id"]) == transfer_id and row["status"] == "CANCELLED" for row in history)
     assert any(int(row["id"]) == new_transfer_id and row["status"] == "CANCELLED" for row in history)
+
+
+def test_tarifa_lavanderia_com_vigencia_no_periodo(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    add_item("Toalha premium", "Banho", laundry_unit_cost=2.0, operation_unit="HOTEL")
+    item_id = int(list_items(operation_unit="HOTEL")[0]["id"])
+
+    upsert_laundry_rate(item_id=item_id, effective_from=date(2026, 3, 1), unit_price=2.0)
+    upsert_laundry_rate(item_id=item_id, effective_from=date(2026, 3, 16), unit_price=3.0)
+    add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 10), operation_unit="HOTEL")
+    add_movement(item_id, "LAUNDRY_SENT", 10, date(2026, 3, 20), operation_unit="HOTEL")
+
+    report = get_laundry_period_item_report(
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 31),
+        operation_unit="HOTEL",
+    )
+    assert len(report) == 1
+    assert report[0]["total_billed_qty"] == 20
+    assert report[0]["total_billed_value"] == 50.0
+
+
+def test_tabela_tarifas_por_item(tmp_path):
+    _prepare_tmp_db(tmp_path)
+    add_item("Lençol Luxo", "Cama", laundry_unit_cost=4.0, operation_unit="CLUB")
+    item_id = int(list_items(operation_unit="CLUB")[0]["id"])
+    upsert_laundry_rate(item_id=item_id, effective_from=date(2026, 3, 1), unit_price=4.5)
+
+    price, eff = get_laundry_price_for_item_on_date(item_id=item_id, ref_date=date(2026, 3, 11))
+    assert price == 4.5
+    assert eff == date(2026, 3, 1)
+
+    table = list_laundry_price_table(operation_unit="CLUB", ref_date=date(2026, 3, 11))
+    assert len(table) == 1
+    assert table[0]["current_unit_price"] == 4.5
