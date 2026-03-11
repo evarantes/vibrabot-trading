@@ -14,6 +14,19 @@ import streamlit as st
 sys.path.append(str(Path(__file__).resolve().parent / "src"))
 
 from codexiaauditor.audit_engine import generate_audit_report
+from codexiaauditor.auth import (
+    ROLE_ADMIN,
+    ROLE_MASTER,
+    ROLE_USER,
+    authenticate_user,
+    change_password,
+    create_user,
+    ensure_master_user,
+    get_user_by_id,
+    get_user_permissions,
+    list_users,
+    update_user,
+)
 from codexiaauditor.database import init_db
 from codexiaauditor.invoice_parser import (
     parse_access_key_metadata,
@@ -101,6 +114,7 @@ MENU_LABELS = {
     "count": "🧮 Contagem Física",
     "dashboard": "📊 Painel de Controle",
     "audit": "🤖 Auditoria IA",
+    "users": "👤 Gestão de Usuários",
 }
 
 MENU_TO_LEGACY = {
@@ -113,6 +127,7 @@ MENU_TO_LEGACY = {
     "count": "Contagem Física",
     "dashboard": "Painel de Controle",
     "audit": "Auditoria IA",
+    "users": "Gestão de Usuários",
 }
 
 
@@ -206,6 +221,74 @@ def _parse_date_br(value: object) -> date:
     raise ValueError(f"Data inválida: {value}. Use DD/MM/AAAA.")
 
 
+def _logout() -> None:
+    st.session_state.pop("auth_user_id", None)
+    st.session_state.pop("auth_user", None)
+    st.rerun()
+
+
+ensure_master_user(list(MENU_LABELS.keys()))
+
+auth_user_id = st.session_state.get("auth_user_id")
+auth_user = get_user_by_id(int(auth_user_id)) if auth_user_id else None
+if auth_user and not bool(auth_user.get("is_active", True)):
+    auth_user = None
+    st.session_state.pop("auth_user_id", None)
+    st.session_state.pop("auth_user", None)
+
+if not auth_user:
+    st.title("AUDITOR CODEXIA")
+    st.subheader("Acesso ao sistema")
+    with st.form("form-login"):
+        c1, c2 = st.columns(2)
+        login_email = c1.text_input("E-mail")
+        login_password = c2.text_input("Senha", type="password")
+        login_submit = st.form_submit_button("Entrar")
+        if login_submit:
+            user = authenticate_user(login_email, login_password)
+            if not user:
+                st.error("Credenciais inválidas.")
+            else:
+                st.session_state["auth_user_id"] = int(user["id"])
+                st.rerun()
+    st.stop()
+
+st.session_state["auth_user"] = auth_user
+
+if bool(auth_user.get("must_change_password", False)):
+    st.title("AUDITOR CODEXIA")
+    st.warning("Altere sua senha no primeiro acesso para continuar.")
+    with st.form("form-change-password-first-login"):
+        p1, p2 = st.columns(2)
+        new_pass = p1.text_input("Nova senha", type="password")
+        confirm_pass = p2.text_input("Confirmar nova senha", type="password")
+        save_new_pass = st.form_submit_button("Salvar nova senha")
+        if save_new_pass:
+            if len(new_pass.strip()) < 6:
+                st.error("A nova senha deve ter no mínimo 6 caracteres.")
+            elif new_pass != confirm_pass:
+                st.error("A confirmação da senha não confere.")
+            else:
+                try:
+                    change_password(int(auth_user["id"]), new_pass.strip())
+                    st.success("Senha alterada com sucesso. Faça login novamente.")
+                    _logout()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Falha ao alterar senha: {exc}")
+    st.stop()
+
+if str(auth_user.get("role")) == ROLE_MASTER:
+    allowed_menu_keys = list(MENU_LABELS.keys())
+else:
+    allowed_menu_keys = get_user_permissions(int(auth_user["id"]))
+    allowed_menu_keys = [x for x in allowed_menu_keys if x in MENU_LABELS]
+
+if not allowed_menu_keys:
+    st.error("Seu usuário não possui permissões de acesso. Contate o administrador.")
+    if st.button("Sair"):
+        _logout()
+    st.stop()
+
 st.markdown(
     """
     <style>
@@ -235,6 +318,9 @@ st.markdown(
 )
 
 st.sidebar.markdown("## Menu")
+st.sidebar.caption(f"👤 {auth_user['full_name']} ({auth_user['role']})")
+if st.sidebar.button("Sair"):
+    _logout()
 selected_unit = st.sidebar.selectbox(
     "Unidade para auditoria",
     options=list(UNIT_OPTIONS.keys()),
@@ -243,7 +329,7 @@ selected_unit = st.sidebar.selectbox(
 as_of_date = st.sidebar.date_input("Dados de referência de auditoria", value=date.today())
 menu_key = st.sidebar.radio(
     "Módulos",
-    options=list(MENU_LABELS.keys()),
+    options=allowed_menu_keys,
     format_func=lambda x: MENU_LABELS[x],
 )
 menu = MENU_TO_LEGACY[menu_key]
@@ -381,6 +467,120 @@ if menu == "Cadastro de Itens (Central)":
             use_container_width=True,
             hide_index=True,
         )
+
+elif menu == "Gestão de Usuários":
+    st.subheader("Gestão de usuários e permissões")
+    current_role = str(auth_user.get("role", ""))
+    if current_role not in {ROLE_MASTER, ROLE_ADMIN}:
+        st.error("Acesso negado.")
+        st.stop()
+
+    permission_keys = list(MENU_LABELS.keys())
+    users_data = list_users()
+    user_table_rows: list[dict[str, object]] = []
+    for user in users_data:
+        user_permissions = get_user_permissions(int(user["id"]))
+        user_table_rows.append(
+            {
+                "id": int(user["id"]),
+                "nome": user["full_name"],
+                "email": user["email"],
+                "perfil": user["role"],
+                "ativo": bool(user["is_active"]),
+                "troca_senha_primeiro_login": bool(user["must_change_password"]),
+                "modulos": ", ".join(MENU_LABELS[k] for k in user_permissions if k in MENU_LABELS),
+            }
+        )
+    st.dataframe(pd.DataFrame(user_table_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("### Criar novo usuário")
+    with st.form("form-create-user"):
+        c1, c2, c3 = st.columns(3)
+        new_name = c1.text_input("Nome completo")
+        new_email = c2.text_input("E-mail")
+        new_role = c3.selectbox("Perfil", options=[ROLE_ADMIN, ROLE_USER])
+        c4, c5, c6 = st.columns(3)
+        new_password = c4.text_input("Senha inicial", type="password", value="123456")
+        must_change = c5.checkbox("Forçar troca no primeiro login", value=True)
+        new_active = c6.checkbox("Ativo", value=True)
+        selected_modules = st.multiselect(
+            "Módulos permitidos",
+            options=permission_keys,
+            format_func=lambda x: MENU_LABELS[x],
+            default=[k for k in permission_keys if k != "users"] if new_role == ROLE_USER else permission_keys,
+        )
+        create_submit = st.form_submit_button("Criar usuário")
+        if create_submit:
+            try:
+                if not new_name.strip() or not new_email.strip():
+                    st.error("Nome e e-mail são obrigatórios.")
+                elif len(new_password.strip()) < 6:
+                    st.error("A senha inicial deve ter pelo menos 6 caracteres.")
+                else:
+                    create_user(
+                        email=new_email,
+                        full_name=new_name,
+                        role=new_role,
+                        password=new_password.strip(),
+                        must_change_password=must_change,
+                        is_active=new_active,
+                        module_keys=selected_modules,
+                    )
+                    st.success("Usuário criado com sucesso.")
+                    st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Falha ao criar usuário: {exc}")
+
+    st.markdown("### Editar usuário existente")
+    if users_data:
+        option_labels = [
+            f"#{int(u['id'])} | {u['full_name']} | {u['email']} | {u['role']}"
+            for u in users_data
+        ]
+        selected_user_label = st.selectbox("Selecione o usuário", options=option_labels, key="edit_user_select")
+        selected_user_id = int(selected_user_label.split("|")[0].replace("#", "").strip())
+        selected_user = next((u for u in users_data if int(u["id"]) == selected_user_id), None)
+        if selected_user:
+            selected_permissions = get_user_permissions(selected_user_id)
+            with st.form("form-edit-user"):
+                e1, e2, e3 = st.columns(3)
+                edit_name = e1.text_input("Nome", value=str(selected_user["full_name"]))
+                edit_role = e2.selectbox("Perfil", options=[ROLE_MASTER, ROLE_ADMIN, ROLE_USER], index=[ROLE_MASTER, ROLE_ADMIN, ROLE_USER].index(str(selected_user["role"])))
+                edit_active = e3.checkbox("Ativo", value=bool(selected_user["is_active"]))
+                e4, e5 = st.columns(2)
+                edit_must_change = e4.checkbox(
+                    "Exigir troca de senha no próximo login",
+                    value=bool(selected_user["must_change_password"]),
+                )
+                reset_password = e5.text_input("Nova senha (opcional)", type="password")
+                edit_modules = st.multiselect(
+                    "Módulos permitidos",
+                    options=permission_keys,
+                    format_func=lambda x: MENU_LABELS[x],
+                    default=selected_permissions,
+                    key=f"edit_modules_{selected_user_id}",
+                )
+                save_edit_user = st.form_submit_button("Salvar alterações do usuário")
+                if save_edit_user:
+                    try:
+                        if int(selected_user_id) == int(auth_user["id"]) and edit_role != ROLE_MASTER and current_role == ROLE_MASTER:
+                            st.error("O usuário master logado não pode remover seu próprio perfil master.")
+                        elif str(selected_user["email"]).lower() == "evarantes2@gmail.com" and not edit_active:
+                            st.error("O usuário master principal não pode ser desativado.")
+                        else:
+                            update_user(
+                                user_id=selected_user_id,
+                                full_name=edit_name,
+                                role=edit_role,
+                                is_active=bool(edit_active),
+                                must_change_password=bool(edit_must_change),
+                                module_keys=edit_modules if edit_role != ROLE_MASTER else permission_keys,
+                                new_password=reset_password.strip(),
+                            )
+                            st.success("Usuário atualizado com sucesso.")
+                            st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Falha ao atualizar usuário: {exc}")
 
 elif menu == "Transferir Central -> Unidade":
     st.subheader("Transferência do estoque CENTRAL para HOTEL/CLUB")

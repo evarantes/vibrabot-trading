@@ -215,6 +215,35 @@ def _init_postgres() -> None:
         execute(
             conn,
             """
+            CREATE TABLE IF NOT EXISTS users (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'USER',
+                password_hash TEXT NOT NULL,
+                must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """,
+        )
+        execute(
+            conn,
+            """
+            CREATE TABLE IF NOT EXISTS user_permissions (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                module_key TEXT NOT NULL,
+                allowed BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, module_key)
+            );
+            """,
+        )
+        execute(
+            conn,
+            """
             ALTER TABLE movements
             ADD COLUMN IF NOT EXISTS operation_unit TEXT NOT NULL DEFAULT 'HOTEL';
             """,
@@ -349,6 +378,28 @@ def _init_sqlite() -> None:
                 FOREIGN KEY (central_movement_id) REFERENCES movements(id),
                 FOREIGN KEY (target_movement_id) REFERENCES movements(id),
                 FOREIGN KEY (revised_from_transfer_id) REFERENCES transfers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'USER',
+                password_hash TEXT NOT NULL,
+                must_change_password INTEGER NOT NULL DEFAULT 1,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS user_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                module_key TEXT NOT NULL,
+                allowed INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, module_key),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
             """
         )

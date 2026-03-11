@@ -68,6 +68,11 @@ O objetivo é apontar rapidamente **onde está o erro** usando análise automát
    - formato visual de tarifa `0,00` e data `DD/MM/AAAA`,
    - suporta reajuste no meio da quinzena/mês por item,
    - histórico de tarifas por item.
+11. **Controle de acesso e permissões**
+   - login obrigatório por usuário,
+   - usuário master inicial com troca obrigatória de senha no primeiro acesso,
+   - criação de usuários e administradores com poderes limitados,
+   - permissão por módulo do sistema.
 
 ---
 
@@ -115,6 +120,12 @@ export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/codexiaauditor
 ```bash
 streamlit run app.py
 ```
+
+### 6) Primeiro acesso (usuário master)
+
+- E-mail: `evarantes2@gmail.com`
+- Senha inicial: `123456`
+- No primeiro login, o sistema exige troca obrigatória da senha.
 
 ---
 
